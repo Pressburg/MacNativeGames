@@ -2788,7 +2788,7 @@ static unsigned present_ticks(const win_t *o) {   /* pacing-clock ticks per game
     int m = mfx_enabled();
     if (m == MFX_HALF && !game_holds_30()) return 2;
     if (m == MFX_30 || game_holds_30()) { int hz = g_paced_hz > 0 ? g_paced_hz : 60; return (unsigned)(hz >= 45 ? (hz + 15) / 30 : 1); }
-    if (g_present_mode == PRESENT_DISPLAY) return 1;   // one frame per refresh: the pacing clock is the display's
+    if (g_present_mode == PRESENT_DISPLAY || g_present_mode == PRESENT_LOCKED) return 1;   // one frame per refresh: the pacing clock is the display's
     return g_display_mode || (uncapped_now() && !dm_detclock_enabled() && uncapped_interval_on()) || o->interval <= 0 ? 1u : (unsigned)o->interval;
 }
 static uint64_t present_period(const win_t *o) {
