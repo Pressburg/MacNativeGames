@@ -29,6 +29,24 @@ static unsigned vsyncCount;
 void hle_bind_system_event(void *,int);
 void hle_signal_system_event(void *);
 void *front_metal_layer(void){return (__bridge void *)metalLayer;}
+/* The screen the game's window is on, not the main display: with an external monitor the game runs on the external
+   one, while the main display is the built-in panel, so the frame rate was paced at the wrong rate. The current mode's
+   refresh rate, and the screen's own maximum (a ProMotion panel's top rate is above the mode it is in). */
+int front_display_hz(void){
+ if(!window)return 0;
+ NSScreen *screen=window.screen; if(!screen)return 0;
+ NSNumber *number=screen.deviceDescription[@"NSScreenNumber"];
+ if(number){
+  CGDisplayModeRef mode=CGDisplayCopyDisplayMode((CGDirectDisplayID)number.unsignedIntValue);
+  double hz=mode?CGDisplayModeGetRefreshRate(mode):0; if(mode)CGDisplayModeRelease(mode);
+  if(hz>0)return (int)(hz+0.5);
+ }
+ return (int)screen.maximumFramesPerSecond;
+}
+int front_display_max_hz(void){
+ if(!window)return 0;
+ NSScreen *screen=window.screen; return screen?(int)screen.maximumFramesPerSecond:0;
+}
 void front_frame_presented(void){
  if(atomic_fetch_add_explicit(&presentedFrames,1,memory_order_relaxed)==0){
   fprintf(stderr,"[totk-boot] %.3f first presented frame\n",(runtime_now_ns()-bootStartNS)/1e9);
