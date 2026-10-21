@@ -30,7 +30,7 @@ RODATA = bytes((index * 11 + 5) & 0xff for index in range(RODATA_SIZE))
 DATA = bytes((index * 13 + 9) & 0xff for index in range(DATA_SIZE))
 
 
-def nso_bytes(*, compress=False, digests=True):
+def nso_bytes(*, compress=False, digests=True, build_id=BUILD_ID):
     """A synthetic NSO module: three segments, a 20-byte build ID, optional LZ4 segments and header digests."""
     segments = [(TEXT, 0), (RODATA, RODATA_ADDRESS), (DATA, DATA_ADDRESS)]
     stored, csz = [], []
@@ -47,7 +47,7 @@ def nso_bytes(*, compress=False, digests=True):
         header[0xa0 + 32*index:0xc0 + 32*index] = hashlib.sha256(data).digest()
         offset += len(payload)
     struct.pack_into('<I', header, 0x3c, BSS)
-    header[0x40:0x50] = BUILD_ID
+    header[0x40:0x50] = build_id
     struct.pack_into('<III', header, 0x60, *csz)
     return bytes(header) + b''.join(stored)
 
@@ -198,11 +198,15 @@ class Case(unittest.TestCase):
         with self.assertRaisesRegex(mod_exefs.ModError, '@flag some_flag is not supported'):
             self.apply()
 
-    def test_pchtxt_for_another_build_is_refused(self):
+    def test_pchtxt_for_another_build_is_skipped_with_a_note(self):
+        # the mod managers ship one pchtxt per game version, so a mod folder usually holds several of them; the ones
+        # that are not for this build are left out with a note, and the build goes on with the patch that fits
         self.retail()
         self.patch(pchtxt([(0x40, b'\xaa')], build_id='00' * 16))
-        with self.assertRaisesRegex(mod_exefs.ModError, 'another build of main'):
-            self.apply()
+        report = self.apply()
+        self.assertEqual(report['status'], 'skipped')
+        self.assertIn('another build of main', ' '.join(report['notes']))
+        self.assertFalse(self.output.exists())
 
     def test_pchtxt_without_nsobid_is_refused(self):
         self.retail()
@@ -262,6 +266,16 @@ class Case(unittest.TestCase):
         report = self.apply()
         self.assertEqual(image_of(self.output.read_bytes())[0x40:0x42], b'\x11\x22')
         self.assertEqual(report['patches'][0]['file'], f'exefs/{BUILD_ID.hex().upper()}.ips')
+
+    def test_ips_named_by_the_zero_padded_build_id_is_a_main_patch(self):
+        # the same, in the form the mod managers ship it: the build ID zero-padded to the 32 bytes of an NCA build ID
+        # (exefs_patches/<mod>/9B4E4365...0000.ips - the triple buffering patch is shipped this way)
+        self.retail()
+        name = BUILD_ID.hex().upper() + '0' * 24 + '.ips'
+        self.patch(ips([(0x100 + 0x40, b'\x11\x22')], magic=b'IPS32', offset_size=4, end=b'EEOF'), name=name)
+        report = self.apply()
+        self.assertEqual(image_of(self.output.read_bytes())[0x40:0x42], b'\x11\x22')
+        self.assertEqual(report['patches'][0]['file'], f'exefs/{name}')
 
     def test_a_patch_for_another_module_is_noted_and_not_merged(self):
         self.retail()
@@ -370,6 +384,19 @@ class Case(unittest.TestCase):
             mod_exefs.apply(argparse.Namespace(exefs=self.exefs, mod=empty, version='v121',
                                               output=self.output, report=self.report))
 
+    def test_a_mod_with_only_romfs_is_accepted(self):
+        # a data-only mod: its files are loaded while the game runs, so there is nothing to merge into main - but the
+        # mod is not broken and the build goes on with its romfs/ half
+        self.retail()
+        data = self.root/'DataMod'
+        (data/'romfs'/'UI').mkdir(parents=True)
+        (data/'romfs'/'UI'/'x.byml').write_bytes(b'\x00')
+        report = mod_exefs.apply(argparse.Namespace(exefs=self.exefs, mod=data, version='v121',
+                                                    output=self.output, report=self.report))
+        self.assertEqual(report['status'], 'skipped')
+        self.assertIn('only data', ' '.join(report['notes']))
+        self.assertFalse(self.output.exists())
+
     def test_a_pchtxt_that_applies_nothing_is_a_note_not_a_failure(self):
         # every section @disabled: the file is kept around but switched off, which must not stop a build that also
         # carries the mod's romfs/
@@ -401,13 +428,35 @@ class Case(unittest.TestCase):
         self.assertIn('main.npdm: not merged', notes)
         self.assertIn('no code patch for main', notes)
 
-    def test_a_pchtxt_for_another_build_is_still_refused(self):
-        # the skip above is for "nothing to merge", never for a patch that was made for another main
+    def test_a_pchtxt_for_another_build_leaves_the_one_that_fits(self):
+        # the real layout of a mod that ships one file per version (the 60 FPS and the triple buffering patches):
+        # the file for this build is merged, the others are named and left out
         self.retail()
-        self.patch(pchtxt([(0x40, b'\xaa')], build_id='00' * 16))
-        with self.assertRaisesRegex(mod_exefs.ModError, 'another build of main'):
-            self.apply()
+        self.patch(pchtxt([(0x40, b'\xaa\xbb\xcc\xdd')], build_id='00' * 16), name='1.0.0.pchtxt')
+        self.patch(pchtxt([(0x50, b'\x11\x22\x33\x44')]), name='1.2.1.pchtxt')
+        report = self.apply()
+        self.assertEqual(report['status'], 'pass')
+        self.assertEqual(len(report['patches']), 1)
+        self.assertEqual(report['patches'][0]['file'], 'exefs/1.2.1.pchtxt')
+        image = image_of(self.output.read_bytes())
+        self.assertEqual(image[0x40:0x44], TEXT[0x40:0x44])       # the other version's patch was not applied
+        self.assertEqual(image[0x50:0x54], b'\x11\x22\x33\x44')
+        self.assertIn('another build of main', ' '.join(report['notes']))
 
+    def test_a_pchtxt_for_another_module_is_skipped_with_a_note(self):
+        # a patch for a module the app loads but does not patch (sdk, subsdk0): it can never be applied here, but it
+        # must not stop the mod's main patch from being merged
+        self.retail()
+        (self.exefs/'sdk').write_bytes(nso_bytes(build_id=bytes.fromhex('22' * 20)))
+        self.patch(pchtxt([(0x40, b'\xaa\xbb\xcc\xdd')], build_id='22' * 20), name='sdk.pchtxt')
+        self.patch(pchtxt([(0x50, b'\x11\x22\x33\x44')]), name='main.pchtxt')
+        report = self.apply()
+        self.assertEqual(report['status'], 'pass')
+        self.assertEqual(len(report['patches']), 1)
+        self.assertIn('for the module sdk', ' '.join(report['notes']))
+        image = image_of(self.output.read_bytes())
+        self.assertEqual(image[0x40:0x44], TEXT[0x40:0x44])
+        self.assertEqual(image[0x50:0x54], b'\x11\x22\x33\x44')
     def test_a_retail_main_with_a_broken_segment_digest_is_refused(self):
         raw = bytearray(nso_bytes())
         raw[0xa0] ^= 0xff                                # the header's own digest of the text segment
@@ -460,8 +509,18 @@ class Case(unittest.TestCase):
         done = subprocess.run([sys.executable, str(SCRIPTS/'mod_exefs.py'), 'apply', '--exefs', str(self.exefs),
                                '--mod', str(self.mod), '--version', 'v121', '--output', str(self.output)],
                               capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)       # another build: a note, not a failure
+        self.assertIn('another build of main', done.stdout)
+        self.assertFalse(self.output.exists())
+
+    def test_the_command_line_reports_a_broken_patch(self):
+        self.retail()
+        self.patch('@enabled\n40 aabbccdd\n@stop\n')            # no @nsobid line: it cannot be checked
+        done = subprocess.run([sys.executable, str(SCRIPTS/'mod_exefs.py'), 'apply', '--exefs', str(self.exefs),
+                               '--mod', str(self.mod), '--version', 'v121', '--output', str(self.output)],
+                              capture_output=True, text=True)
         self.assertEqual(done.returncode, 1)
-        self.assertIn('another build of main', done.stderr)
+        self.assertIn('@nsobid', done.stderr)
         self.assertFalse(self.output.exists())
 
     def test_the_sites_command_lists_a_version(self):

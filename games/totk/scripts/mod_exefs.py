@@ -12,7 +12,8 @@ What is merged (v1): the code patches for **main** only, read from `<mod>/exefs/
   *.ips / *.ips32   an IPS / IPS32 patch, as emulators apply it to the NSO. Its offsets count the 0x100-byte NSO
                     header (IPS numbers are main addresses + 0x100); here the same convention is reversed. The file
                     names no module or build by itself, so it is read as a main patch only when it is named main, or
-                    main's build id the way Atmosphere and the mod managers name patches (exefs/<build id>.ips); a
+                    main's build id the way Atmosphere and the mod managers name patches (exefs/<build id>.ips, also
+                    in the form they ship it: the build id zero-padded to the 32 bytes of an NCA build id); a
                     patch for another module, or named after another build of main, is left out with a note.
   *.pchtxt          the community text form, read as the runtime's own TOTK_PCHTXT experiment reads it (plus the two
                     switches it does not read yet - see the next line); the format is:
@@ -23,9 +24,14 @@ What is merged (v1): the code patches for **main** only, read from `<mod>/exefs/
                     applied; a file without it, or with another shift, is refused rather than put 0x100 bytes off.
                     "@flag print_values" (a display option of the patching tools) is accepted. The build id
                     may be the 16-byte one (32 hex digits, as the rewriter's tables use it) or the 20 bytes the
-                    runtime compares.
+                    runtime compares. A file that names another build - another game version, or another module - is
+                    left out with a note (the mod managers ship one file per version, so a mod folder usually holds
+                    several of them) and the build goes on with the file that fits.
   main.npdm         ignored with a note: the native loader never reads a module's npdm (the module metadata comes
                     from the tables built from the retail code).
+
+A mod that holds only data (a romfs/ and no exefs/) is not a failure: there is nothing to merge into main, and its
+files are loaded while the game runs (docs/mods.md).
 
 What is not (v1): an extra code module (`subsdk9` and the like) is **not loaded** - the app loads the three modules
 it was built from, so a module's own code never runs. The build says so, records it in the report, and still merges
@@ -327,7 +333,55 @@ def _is_build_id(text):
     return len(text) in (32, 40) and all(character in '0123456789abcdef' for character in text)
 
 
-def patch_files(exefs, build_id):
+def pchtxt_build_id(path):
+    """The build ID a pchtxt names in its @nsobid- line (lowercase hex), or None when the file names none.
+
+    Read without applying anything: the mod managers ship one pchtxt per game version, so a mod folder usually holds
+    several of them and only the one for this version may be applied."""
+    try:
+        text = path.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.lower().startswith('@nsobid-'):
+            return line[8:].strip().lower()
+    return None
+
+
+def module_build_ids(exefs):
+    """{module name: its 20-byte build ID} of the extracted retail ExeFS, read out of the NSO headers.
+
+    Only the header is read (the build ID sits at 0x40), so no segment is decompressed."""
+    found = {}
+    for path in sorted(exefs.glob('*')):
+        if not path.is_file() or path.suffix == '.npdm':
+            continue
+        try:
+            with open(path, 'rb') as handle:
+                header = handle.read(BUILD_ID_AT + BUILD_ID_SIZE)
+        except OSError:
+            continue
+        if header[:4] != b'NSO0':
+            continue
+        found[path.name] = header[BUILD_ID_AT:BUILD_ID_AT + BUILD_ID_SIZE].hex()
+    return found
+
+
+def _names_this_build(stem, build):
+    """True for the names the mod managers give a patch of this build's main: 'main', the 16- or 20-byte build ID,
+    and the Atmosphere form - the build ID zero-padded to the 32 bytes of an NCA build ID
+    (exefs_patches/<mod>/9B4E4365...0000.ips), which is how the triple-buffering and the 60 FPS patches are shipped."""
+    if stem == 'main':
+        return True
+    if not build or len(stem) < 32:
+        return False
+    if not all(character in '0123456789abcdef' for character in stem):
+        return False
+    return stem.startswith(build[:32])
+
+
+def patch_files(exefs, build_id, module_builds=None):
     """(patch files, notes) of a mod's exefs folder.
 
     Only main can change at build time: the app loads the three modules it was built from, so an extra code module a
@@ -336,23 +390,39 @@ def patch_files(exefs, build_id):
     A whole replacement module is refused: it would have to be verified as this version's code, which is the job of
     the patches (and of games/totk/assets/expected-*.json).
 
-    A .pchtxt says which build of main it was made for (@nsobid-); an IPS / IPS32 carries no module or build id of its
-    own, so it is read as a main patch only when its name says so: main, or main's build id the way Atmosphere and the
-    mod managers name patches (exefs/<build id>.ips). Anything else is left out with a note, so a patch for sdk or
-    subsdk9, or one named after another build of main, can never be applied to this main by accident."""
+    A .pchtxt says which build of main it was made for (@nsobid-); a mod folder usually holds one per game version, so
+    the ones that name another build are left out with a note - the build goes on with the patch that fits, instead of
+    stopping on the ones that do not. An IPS / IPS32 carries no module or build id of its own, so it is read as a main
+    patch only when its name says so: main, or main's build id the way Atmosphere and the mod managers name patches
+    (exefs/<build id>.ips). Anything else is left out with a note, so a patch for sdk or subsdk9, or one named after
+    another build of main, can never be applied to this main by accident."""
     files = sorted(p for p in exefs.rglob('*') if p.is_file()
                    and not any(part.startswith('.') for part in p.relative_to(exefs).parts))
     build = (build_id or '').lower()
-    main_names = {'main'} | ({build[:32], build} if build else set())
+    modules = module_builds or {}
     patches, notes = [], []
     for path in files:
         name = path.relative_to(exefs.parent).as_posix()
         suffix, stem = path.suffix.lower(), path.stem.lower()
         if suffix == '.pchtxt':
-            patches.append(path)        # its @nsobid- line is checked against this main's build id
+            named = pchtxt_build_id(path)
+            if named is None:
+                patches.append(path)    # no @nsobid- line: refused below, with the reason (it cannot be checked)
+                continue
+            if named in (build, build[:32]):
+                patches.append(path)
+                continue
+            owner = next((module for module, identifier in modules.items() if named in (identifier, identifier[:32])),
+                         None)
+            if owner:
+                notes.append(f'{name}: not merged (this patch is for the module {owner}, which the app loads but does '
+                             f'not patch; the mod\'s main patches and its RomFS still apply)')
+            else:
+                notes.append(f'{name}: not merged (this patch is for another build of main (@nsobid-{named}), not '
+                             f'{build[:32] or "this build"}; the mod\'s other patches and its RomFS still apply)')
             continue
         if suffix in PATCH_SUFFIXES:
-            if stem in main_names:
+            if _names_this_build(stem, build):
                 patches.append(path)
             elif stem in MODULES or MODULE_STEM.fullmatch(stem):
                 notes.append(f'{name}: not merged (a patch for {stem}, and the app loads only the modules it was built '
@@ -398,8 +468,21 @@ def apply(args):
     mod = args.mod.expanduser().resolve()
     exefs = mod / 'exefs'
     if not exefs.is_dir():
+        if (mod / 'romfs').is_dir():
+            # A data-only mod: its files are loaded while the game runs (docs/mods.md), so there is nothing to merge
+            # into main - but the mod is not broken, and the build goes on with its RomFS half.
+            report = dict(format=1, status='skipped', folder=str(mod), version=args.version, build_id=None,
+                          patches=[], edit_bytes=0,
+                          notes=[f'{mod}/exefs: not merged (the mod holds no code patch, only data; its romfs/ is '
+                                 f'loaded while the game runs)'])
+            report_path = (args.report.expanduser().resolve() if args.report else
+                           args.output.expanduser().resolve().with_name('mod-exefs.json'))
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(report, indent=2) + '\n')
+            print(f'mod: nothing merged into main; {mod.name} holds data only')
+            return report
         raise ModError(f'{mod}: a mod folder holds its files under exefs/ (code patches) and romfs/ (data); '
-                       f'this one has no exefs/')
+                       f'this one has no exefs/ and no romfs/')
     source = args.exefs.expanduser().resolve()
     main = source / 'main'
     if not main.is_file():
@@ -408,7 +491,7 @@ def apply(args):
     nso = Nso(raw)
     retail_sha = sha256_bytes(raw)
 
-    patches, notes = patch_files(exefs, nso.build_id)
+    patches, notes = patch_files(exefs, nso.build_id, module_build_ids(source))
     if (mod / 'romfs').is_dir():
         notes.append('romfs/: not merged (data mods are loaded while the game runs, from '
                      '~/Library/Application Support/MacNativeGames/TOTK/mods/<version>; see docs/mods.md)')
@@ -431,11 +514,11 @@ def apply(args):
             nso.segment_of(address, len(payload), where)
             hits = patch_sites.overlaps([(address, len(payload))], reserved)
             if hits:
-                site = hits[0][2]
+                sites = ', '.join(f'{site.label} at {site.offset:#x}' for site in dict.fromkeys(hit[2] for hit in hits))
                 raise ModError(f'{name}: main+{address:#x}..{address + len(payload):#x} overlaps a site the build or '
-                               f'the runtime patches itself ({site.label} at {site.offset:#x}); a mod patch cannot '
-                               f'change it (leave that feature to the app: TOTK_FPS60, TOTK_REALTIME, TOTK_ASPECT, '
-                               f'TOTK_OUTPUT_RES, TOTK_RENDER_RES)')
+                               f'the runtime patches itself ({sites}); a mod patch cannot change it (leave that '
+                               f'feature to the app: TOTK_FPS60, TOTK_REALTIME, TOTK_ASPECT, TOTK_OUTPUT_RES, '
+                               f'TOTK_RENDER_RES)')
             for start in range(address, address + len(payload)):
                 if start in taken and taken[start] != name:
                     raise ModError(f'{name} and {taken[start]} both change main+{start:#x}')

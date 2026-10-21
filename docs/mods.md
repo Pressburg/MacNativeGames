@@ -186,12 +186,17 @@ What the build does, in order:
      counts, which is how they are applied; a file without it, or with another shift, is refused by file and
      line rather than patched 0x100 bytes off. `@flag print_values` (a display option of the patching tools,
      in every community pchtxt we have seen) is accepted; any other flag is refused. The `@nsobid-` line identifies
-     the target build, so the file name does not matter.
+     the target build, so the file name does not matter. A file that names **another** build - another game
+     version, or another module - is left out with a note and the build goes on with the file that fits: the mod
+     managers ship one file per version, so a mod folder usually holds several of them, and only the one for
+     this version may be applied. A file with no `@nsobid-` line at all cannot be checked against anything and
+     is refused.
    - `.ips` / `.ips32`: applied as emulators apply them, whose offsets count the 0x100-byte NSO header,
      so the build subtracts 0x100. A record below 0x100, a truncated file or a missing `EOF` is an error.
      The file names neither its module nor its build, so it is read as a main patch only when it is named
      `main`, or after main's build id (`exefs/<build id>.ips`, the Atmosphere and mod-manager
-     convention). Anything else is left out with a note: a patch for `sdk` or `subsdk9`, or one named
+     convention, also in the form they ship it: the build id zero-padded to the 32 bytes of an NCA build id).
+     Anything else is left out with a note: a patch for `sdk` or `subsdk9`, or one named
      after another build of main. An `.ips` named `main` has no id to check; naming it after the build
      id, or shipping a `.pchtxt`, provides that check.
 
@@ -214,10 +219,12 @@ What else a mod's `exefs/` may hold:
 | In the mod's `exefs/` | Result |
 | --- | --- |
 | `*.pchtxt`, `*.ips`, `*.ips32` for main | merged into the build; an `.ips` must be named `main` or after main's build id, while a `.pchtxt` names its build in `@nsobid-` and may be named anything |
+| a `*.pchtxt` for another build or another module | left out with a note: the build goes on with the patch that fits this version (the mod managers ship one file per version) |
 | `main.npdm` | ignored with a note: the native loader never reads a module's metadata |
 | `subsdk9` and other extra code modules | **not loaded**, with a note in the build output and in the report: the app loads the three modules it was built from (main, sdk, subsdk0), so the module's own code never runs |
 | a whole replacement `main` | refused: a patch is required instead, so the build can check it against this version |
 | nothing for main (`subsdk9` alone, a `main.npdm` alone, even an empty `exefs/`) | noted, not refused: nothing is merged into main and the build carries on - its code is not in the app, and its data applies once the folder is installed |
+| no `exefs/` at all, only `romfs/` | accepted: there is no code to merge, and the data half is installed with `--install-mod-romfs` |
 
 An extra module is how a mod built with a hooking framework (exlaunch and the like) changes code while
 the game runs: its trampolines never install here. Such a mod - The Second Quest is one - keeps its main
@@ -290,8 +297,9 @@ Check `grep "mods/botw160 checked" ~/Library/Logs/MacNativeGames/botw.log | tail
   --install-mod-romfs`; the build refuses
   two patch files that change the same bytes and names both of them.
 - A mod with a code patch also needs its `exefs/` patch to match the game version the app is built from.
-  The build checks what the file itself says: a `.pchtxt` is refused when its `@nsobid-` names another
-  main, and an `.ips` / `.ips32` named after a build id is left out when that id is not this main's.
+  The build checks what the file itself says: a `.pchtxt` whose `@nsobid-` names another main is left out
+  with a note (the build goes on with the file that fits), and an `.ips` / `.ips32` named after a build id is
+  left out when that id is not this main's.
 - This guide covers the Mac app; installing mods into the iPhone/iPad app container is not covered.
 
 ### When the start stops
@@ -477,9 +485,13 @@ App 自己会替换的文件），它其实什么都没替换——这时构建�
      必须有 `@flag offset_shift 0x100`（说明这些地址不含 IPS 算法里的 0x100 字节 NSO 头，构建正是这样打的）；
      没有这一行、或者是别的位移值，都按文件和行号拒绝，而不是打偏 0x100 字节。`@flag print_values`（补丁工具的
      显示选项，我们见过的社区 pchtxt 都带）可以出现；其它 flag 会拒绝。`@nsobid-` 那一行决定目标 build，所以文件名任意。
+     `@nsobid-` 写的是**别的** build（别的游戏版本，或别的模块）时，这个文件会被留出清单并提示，构建继续走
+     属于本版本的那一个：模组管理器每个版本都发一份文件，所以一个 mod 目录里通常有好几个。
+     完全没有 `@nsobid-` 行的文件无从核对，直接拒绝。
    - `.ips` / `.ips32`：按模拟器的用法应用，其偏移量包含 0x100 字节的 NSO 头，构建时会减掉 0x100。
      偏移小于 0x100、文件截断、缺少 `EOF` 都算错误。这种文件本身不写模块名和 build id，所以只有名字是
-     `main`，或者是 main 的 build id（`exefs/<build id>.ips`，Atmosphere 和模组管理器的约定）时才会
+     `main`，或者是 main 的 build id（`exefs/<build id>.ips`，Atmosphere 和模组管理器的约定，也包括它们
+     实际发布的形式：build id 后面补零到 32 字节）时才会
      当作 main 补丁读入；其余情况（给 `sdk`、`subsdk9` 的补丁，或者名字里是另一个 build id 的补丁）
      会留出清单并提示。名为 `main` 的 `.ips` 没有 id 可核对；按 build id 命名，或改用 `.pchtxt`，才会有这项检查。
 
@@ -499,10 +511,12 @@ mod 的 `exefs/` 里可能还有这些文件，构建这样处理：
 | mod 的 `exefs/` 里 | 结果 |
 | --- | --- |
 | 给 main 的 `*.pchtxt`、`*.ips`、`*.ips32` | 合并进构建；`.ips` 必须叫 `main` 或按 main 的 build id 命名，`.pchtxt` 由 `@nsobid-` 指定版本、文件名任意 |
+| 写的是别的 build 或别的模块的 `*.pchtxt` | 留出清单并提示：构建继续走属于本版本的那一个（模组管理器每个版本都发一份文件） |
 | `main.npdm` | 忽略并提示：原生加载器不读模块元数据 |
 | `subsdk9` 等额外代码模块 | **不加载**：构建输出和报告里都会注明；App 只加载构建时的三个模块（main、sdk、subsdk0），模块自己的代码不会运行 |
 | 整个替换的 `main` | 拒绝：只能用补丁，构建才能按版本核对 |
 | 没有可合并进 main 的东西（只有 `subsdk9`、只有 `main.npdm`，甚至空的 `exefs/`） | 只提示、不拒绝：main 不做任何合并，构建继续；这个 mod 的代码不进 App，数据部分要装进版本目录才生效 |
+| 完全没有 `exefs/`，只有 `romfs/` | 接受：没有代码要合并，数据部分用 `--install-mod-romfs` 装进去 |
 
 用 exlaunch 这类 hook 框架做的 mod，运行时改代码的部分就在这种额外模块里：它的 trampoline 在本 App
 里不会安装。像 The Second Quest 这样的 mod，主模块补丁和整个 RomFS 都会生效，但依赖那个模块的那部分
