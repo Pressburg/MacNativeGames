@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 """Write the manifest.tsv of a player's RomFS mod (runtime/romfs.c loads it from TOTK_ROMFS_MODS, which the launcher sets to
-~/Library/Application Support/MacNativeGames/TOTK/mods/<version>).
+the mods folder next to the work folder: <work folder>/../mods/<version>).
 
 The mod folder holds the replacement files under their RomFS paths (for example Sound/Resource/Stream/Dm_OP_0001.bwav).
 Each line of the manifest names a path, the replacement's size and SHA-256 and the original's SHA-256; the game checks
 all of them at start, so a mod made for another game version stops the start instead of loading. A file the RomFS lacks
 is added (its original's SHA-256 is "-"), unless a RomFS path differs from it only in case: that is a misspelt
 replacement (paths are case-sensitive), so nothing is written. The originals come
-from the RomFS the app was built with: the app's Contents/Resources/totk/extracted/<version>/romfs (romfs.bin and
-runtime-index.bin), or a build work folder's extracted/<version>/romfs.
+from the RomFS the game was built with: the work folder's extracted/v120/romfs (romfs.bin and
+runtime-index.bin). The app bundle holds no game data (it is a small launcher that names the work folder in its
+Info.plist), so --app reads that name and looks there.
 
-usage: make_mod_manifest.py <mod folder> (--app <Tears of the Kingdom.app> | --romfs <folder>) [--version v143]
+usage: make_mod_manifest.py <mod folder> (--app <Bayonetta 3.app> | --romfs <folder>) [--version v120]
 """
 import argparse
 import hashlib
 from pathlib import Path
+import plistlib
 import struct
 import sys
 
-VERSIONS = ('v0', 'v112', 'v121', 'v143')
+VERSIONS = ('v120',)
 CHUNK = 8 << 20
 
 
@@ -77,11 +79,23 @@ def manifest(mod, romfs):
     return lines, same, added, misspelt
 
 
+def work_folder(app):
+    """The work folder the app was built against: Info.plist's BY3WorkFolder (app/launcher.m reads the same key)."""
+    plist = app/'Contents'/'Info.plist'
+    if not plist.is_file():
+        return None
+    try:
+        with plist.open('rb') as handle:
+            return plistlib.load(handle).get('BY3WorkFolder')
+    except (plistlib.InvalidFileException, OSError):
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('mod', type=Path, help='the mod folder, files under their RomFS paths')
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--app', type=Path, help='the built Tears of the Kingdom.app')
+    source.add_argument('--app', type=Path, help='the built Bayonetta 3.app (its Info.plist names the work folder)')
     source.add_argument('--romfs', type=Path, help='a folder holding romfs.bin and runtime-index.bin')
     parser.add_argument('--version', choices=VERSIONS, help='the game version (default: the mod folder name)')
     args = parser.parse_args()
@@ -89,8 +103,12 @@ def main():
     romfs = args.romfs
     if args.app:
         if not version:
-            parser.error('name the game version with --version (or name the mod folder v0, v112, v121 or v143)')
-        romfs = args.app/f'Contents/Resources/totk/extracted/{version}/romfs'
+            parser.error('name the game version with --version (or name the mod folder v120)')
+        work = work_folder(args.app)
+        if not work:
+            parser.error(f'{args.app}: its Info.plist has no BY3WorkFolder, so the game data it was built against cannot '
+                         f'be found; pass --romfs <work folder>/extracted/v120/romfs instead')
+        romfs = Path(work)/'extracted'/version/'romfs'
     for need in ('romfs.bin', 'runtime-index.bin'):
         if not (romfs/need).is_file():
             parser.error(f'{romfs/need} not found')
