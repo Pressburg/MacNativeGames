@@ -64,7 +64,12 @@ test-call-window:
 verify:
 	"$(PY)" scripts/verify_rewrites.py
 
-.PHONY: runtime probe-loader boot
+.PHONY: runtime probe-loader boot syntax-check
+# Compiles the runtime and the graphics layer without the game files: the four headers the build
+# generates from the game data are replaced by stubs (scripts/dev/syntax_check.sh). A compilation
+# check, not a behaviour check - it is the gate for a change on a machine that has no game files.
+syntax-check:
+	@bash scripts/dev/syntax_check.sh
 build/runtime_tables.h: scripts/prepare_runtime.py analysis/phase12-validation.json
 	"$(PY)" scripts/prepare_runtime.py
 
