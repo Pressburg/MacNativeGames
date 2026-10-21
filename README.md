@@ -34,6 +34,8 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 22 | Mac | The frame rate follows the screen the game is on (not the main display), at that screen's own rate: a 144 or 240 Hz panel is no longer paced at 60. `TOTK_PRESENT_MODE` picks how the frames are paced: `uncapped` (the old behaviour), `display` (one frame per refresh, at the screen's refresh rate) or `game` (the console's 60 fps, so the frame-counted parts of the game's UI move as they do on the console at any refresh rate). The launch settings window has both |
+| Oct 22 | Mac | A mod manager in the launcher: install a mod, turn each one on or off, and the folder the game loads is rewritten with its manifest (the code half of a mod still needs a build with `--mod`) |
 | Oct 21 | Mac | `TOTK_FIXED_RES=1` holds 1.4.3's dynamic resolution at 100 % (#122); the mouse cursor hides after 1.5 s idle in native full screen (#121); 16:10 UI layouts with `make_romfs_patches.py --aspect` (#123); a translation mod's UI archive is merged with the build's quick-menu edit instead of refusing to start (#134, #73) |
 | Oct 21 | Mac, iPhone, iPad | Vertex shaders with a custom sampler border colour get their own pipeline per colour, and a sampler that repeats on one axis no longer returns the border there (#148); Breath of the Wild's Magnesis and Stasis pick targets are written back to the CPU (#140); macOS 27 start-up reserves the guest regions separately when no single gap is left (#138); 4,648 new variants in the shared shader list |
 | Oct 21 | Mac, iPhone, iPad | When the game reads or writes part of a texture, only that region is converted, on the GPU, instead of the whole level on the CPU, which was behind long hitches on the Lanayru sky islands (#143) |
@@ -345,6 +347,8 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 | 日期 | 平台 | 更新 |
 |---|---|---|
+| 10 月 22 日 | Mac | 帧率跟着游戏所在的那块屏幕走（不再是主显示器），并按那块屏幕自己的速率：144 或 240 Hz 的屏不再被当成 60 Hz。`TOTK_PRESENT_MODE` 决定出图节奏：`uncapped`（原来的行为）、`display`（每个刷新出一帧，帧率等于屏幕刷新率）或 `game`（保持主机的 60 帧，游戏里按帧计数的界面在任何刷新率下都和主机上一样快）。启动设置窗口里可以选 |
+| 10 月 22 日 | Mac | 启动器里的模组管理：安装模组、逐个开启或关闭，游戏加载的目录连同清单一起重写（模组的代码部分仍需用 `--mod` 重新构建） |
 | 10 月 21 日 | Mac | `TOTK_FIXED_RES=1` 把 1.4.3 的动态分辨率固定在 100%（#122）；原生全屏时鼠标 1.5 秒不动就隐藏（#121）；`make_romfs_patches.py --aspect` 支持 16:10 界面布局（#123）；翻译模组的界面档案和构建自带的快捷菜单修改合并，不再拒绝启动（#134，#73） |
 | 10 月 21 日 | Mac、iPhone、iPad | 顶点着色器的自定义采样器边框色按颜色各建管线，单轴重复的采样器在该轴不再返回边框色（#148）；旷野之息磁力、静止的选取目标回写到 CPU（#140）；macOS 27 启动时没有整块空间就分开保留客体区域（#138）；公共着色器清单新增 4,648 条 |
 | 10 月 21 日 | Mac、iPhone、iPad | 游戏读写贴图的一部分时，只在 GPU 上转换那一块，不再在 CPU 上转换整层；拉聂尔一带空岛上的长卡顿就来自这里（#143） |
