@@ -22,7 +22,7 @@
 
 #define ULOG(...) do { fprintf(stderr, "[dm] [nvn-mtl] [mfx-up] " __VA_ARGS__); fputc('\n', stderr); } while (0)
 
-enum { MFXUP_OLD = 8, MFXUP_OLD_AFTER = 8, MFXUP_CACHE = 3, MFXUP_BAD = 4, MFXUP_RETRY_MS = 10000 };   // replaced objects kept for this many later encodes (the GPU is done with them by then)
+enum { MFXUP_OLD = 8, MFXUP_OLD_AFTER = 8, MFXUP_CACHE = 3, MFXUP_BAD = 4, MFXUP_RETRY_MS = 10000, MFXUP_PAIRS = 4 };   // replaced objects kept for this many later encodes (the GPU is done with them by then)
 /* One scaler configuration. Building a scaler takes about 70 ms (2026-10-17), so a new one is built on a background queue
    while the caller keeps its fallback (the game's own upscale, the bilinear present) for those frames, and the last few
    are kept: switching back (key 3, a window going in and out of full screen) is instant. */
@@ -36,6 +36,8 @@ typedef struct {
     id<MTLFence> fence;
     uint64_t done, refused, waited, tick;
     struct { id obj; id<MTLTexture> tex; uint64_t at; } old[MFXUP_OLD]; int nold;
+    struct { cfg_t from, to; uint64_t times; } pairs[MFXUP_PAIRS]; int npairs;   // the switches already logged (issue #135)
+    uint64_t switches;                              // every switch, logged with the pairs when the count is reported
 } ctx_t;
 static ctx_t g_c[MFXUP_NCTX] = {{.cur = -1}, {.cur = -1}, {.cur = -1}};
 static const char *g_name[MFXUP_NCTX] = {"scene", "docked", "output"};
@@ -168,8 +170,23 @@ static void adopt(ctx_t *c) {
 static int use_cached(int ci, ctx_t *c, const cfg_t *want) {
     adopt(c);
     for (int i = 0; i < c->ncache; i++) if (cfg_eq(&c->cache[i].cfg, want)) {
-        if (c->cur >= 0) ULOG("%s: %s %lux%lu -> %lux%lu", g_name[ci], c->cache[i].used ? "back to the kept scaler" : "switched to the scaler just built",
-                              (unsigned long)want->in_w, (unsigned long)want->in_h, (unsigned long)want->out_w, (unsigned long)want->out_h);
+        if (c->cur >= 0) {
+            /* Issue #135: with frame interpolation and MetalFX 2K both on, the interpolated frames and the game's
+               frames reach the output at different sizes, so the scaler switches between the two on every present.
+               The switch is logged once per pair of sizes, with the number of times it happened, not once per frame
+               (a 67-minute session wrote about 167,700 lines, 45 a second). */
+            const cfg_t *from = &c->cache[c->cur].cfg;
+            c->switches++;
+            int known = 0;
+            for (int k = 0; k < c->npairs; k++) if (cfg_eq(&c->pairs[k].from, from) && cfg_eq(&c->pairs[k].to, want)) {
+                c->pairs[k].times++; known = 1; break;
+            }
+            if (!known) {
+                if (c->npairs < MFXUP_PAIRS) { c->pairs[c->npairs].from = *from; c->pairs[c->npairs].to = *want; c->pairs[c->npairs].times = 1; c->npairs++; }
+                ULOG("%s: %s %lux%lu -> %lux%lu", g_name[ci], c->cache[i].used ? "back to the kept scaler" : "switched to the scaler just built",
+                     (unsigned long)want->in_w, (unsigned long)want->in_h, (unsigned long)want->out_w, (unsigned long)want->out_h);
+            }
+        }
         c->cur = i; c->cache[i].used = ++c->tick; return 1;
     }
     return 0;
@@ -230,6 +247,7 @@ void mfxup_stats(int ci, char *out, size_t n) {
     if (ci < 0 || ci >= MFXUP_NCTX) { snprintf(out, n, "?"); return; }
     const ctx_t *c = &g_c[ci];
     cfg_t z = {0}; const cfg_t *k = c->cur >= 0 ? &c->cache[c->cur].cfg : &z;
-    snprintf(out, n, "MetalFX 空间放大（%s）：%llu 次，未放大 %llu 次（其中等后台建放大器 %llu 次）（%lux%lu → %lux%lu）", g_name[ci], (unsigned long long)c->done,
-             (unsigned long long)c->refused, (unsigned long long)c->waited, (unsigned long)k->in_w, (unsigned long)k->in_h, (unsigned long)k->out_w, (unsigned long)k->out_h);
+    snprintf(out, n, "MetalFX 空间放大（%s）：%llu 次，未放大 %llu 次（其中等后台建放大器 %llu 次）（%lux%lu → %lux%lu）；换放大器 %llu 次", g_name[ci], (unsigned long long)c->done,
+             (unsigned long long)c->refused, (unsigned long long)c->waited, (unsigned long)k->in_w, (unsigned long)k->in_h, (unsigned long)k->out_w, (unsigned long)k->out_h,
+             (unsigned long long)c->switches);
 }
