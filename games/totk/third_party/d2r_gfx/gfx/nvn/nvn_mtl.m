@@ -11904,18 +11904,32 @@ static pres_ent g_pres[PRING];
 double mtl_presented_time(uint64_t n) { pres_ent e = g_pres[n % PRING]; return e.n == n ? e.t : 0; }
 static _Atomic uint64_t g_drawable_ns;   // 出图里等 nextDrawable 的累计墙钟（计时埋点） | Accumulated wall clock waiting for nextDrawable in present (timing instrumentation)
 uint64_t mtl_drawable_ns_take(void) { return atomic_exchange(&g_drawable_ns, 0); }
-// 有窗口时屏幕的最高刷新率（Hz）；无窗口返回 0。Mac 用 CoreGraphics 显示模式（线程安全的 C 接口，出图配置在游戏线程上读）
-// Maximum refresh rate (Hz) of the screen when there is a window; returns 0 without a window. Mac uses CoreGraphics display modes (thread-safe C interface; the present configuration is read on the game thread)
+// 游戏窗口所在的那块屏幕（不是主显示器）：接了外接屏的 Mac 上，游戏跑在外接屏上，而主显示器是内屏，
+// 帧率按内屏的速率走（外接 144 Hz 的屏被当成 60 Hz）。屏幕本身在运行时（frontend.m）读取：图形层不依赖 AppKit。
+// The screen the game's window is on (not the main display): on a MacBook with an external monitor the game runs on
+// the external one, while the main display is the built-in panel, so the frame rate was paced at the wrong rate. The
+// host reads the screen at run time (frontend.m): the graphics layer does not depend on AppKit.
+// 有窗口时屏幕的当前刷新率（Hz）；无窗口返回 0。
+// The current refresh rate (Hz) of the screen when there is a window; returns 0 without a window.
 int mtl_display_hz(void) {
     if (!front_metal_layer()) return 0;
+    int hz = front_display_hz();
+    if (hz > 0) return hz;
 #if TARGET_OS_OSX
     CGDisplayModeRef m = CGDisplayCopyDisplayMode(CGMainDisplayID());
-    double hz = m ? CGDisplayModeGetRefreshRate(m) : 0; if (m) CGDisplayModeRelease(m);
-    return (int)(hz + 0.5);
+    double rate = m ? CGDisplayModeGetRefreshRate(m) : 0; if (m) CGDisplayModeRelease(m);
+    return (int)(rate + 0.5);
 #else
     Class c = NSClassFromString(@"UIScreen"); id s = c ? [c valueForKey:@"mainScreen"] : nil;
     return s ? [[s valueForKey:@"maximumFramesPerSecond"] intValue] : 0;
 #endif
+}
+// 屏幕本身能跑的最高刷新率（Hz）：ProMotion 屏的面板最高 120，当前模式可能是 60。
+// The highest refresh rate the screen itself can run (Hz): a ProMotion panel's top rate is 120 while its current mode may be 60.
+int mtl_display_max_hz(void) {
+    if (!front_metal_layer()) return 0;
+    int hz = front_display_max_hz();
+    return hz > 0 ? hz : mtl_display_hz();
 }
 static _Atomic uint64_t g_present_stall_ns;   // 单测用：出图线程每次出图前额外停顿（模拟 drawable 迟迟不可用） | For unit tests: an extra pause before each present on the present thread (simulating a drawable that stays unavailable)
 static CAMetalLayer *g_present_layer_resident;
@@ -12807,12 +12821,23 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
 static CAMetalDisplayLink *g_link; static CFRunLoopRef g_link_rl; static int g_link_started;
 static int g_link_owns_layer, g_classic_busy;   // 持 g_pq_mu：图层挂着节拍对象期间 nextDrawable 会抛异常，自取 drawable 的出图线程与节拍对象互斥 | Under g_pq_mu: nextDrawable throws while the layer has the display link object attached, so the present thread that takes its own drawable and the display link object are mutually exclusive
 static int link_on(void) { return g_dm_present_link && g_link != nil; }
+static int g_link_hz;   // 节拍对象实际被要求的速率（Hz）：帧占几拍由它和定速时钟的比例决定 | The rate the display link object is actually asked for (Hz): the number of ticks a frame occupies follows from it and the pacing clock
+int mtl_link_hz(void) { return g_link_hz; }
 static CAFrameRateRange link_range(int mode) {
-    if (mode == 3) return CAFrameRateRangeMake(30, 30, 30);
-    if (mode == 2) return CAFrameRateRangeMake(60, 120, 120);
+    if (mode == 3) { g_link_hz = 30; return CAFrameRateRangeMake(30, 30, 30); }
     const char *explicit_hz = getenv("DM_PRESENT_HZ"), *rt = getenv("TOTK_REALTIME");
     int hz = explicit_hz ? atoi(explicit_hz) : (rt && !strcmp(rt, "0")) ? 60 : mtl_display_hz();
-    if (hz < 30 || hz > 120) hz = 60;
+    if (hz < 30) hz = 30;
+    if (hz > 240) hz = 240;   // 144/240 Hz 的屏按自己的速率走，不再被当成 60 | a 144 / 240 Hz panel is paced at its own rate, not turned into 60
+    if (mode == 2) {
+        /* Mode 2: the link ticks twice as fast as the frame rate, so the frame the game just drew can go on screen at
+           the next half-period tick (a lower latency) while the frame rate stays the same. The link must not ask for
+           more than the panel can deliver. */
+        int max = mtl_display_max_hz(); if (max <= 0) max = hz;
+        int link = hz * 2; if (link > max) link = max; if (link > 240) link = 240;
+        g_link_hz = link; return CAFrameRateRangeMake(link, link, link);
+    }
+    g_link_hz = hz;
     return CAFrameRateRangeMake(hz, hz, hz);
 }
 static int g_link_mode = 1;   // 节拍对象当前的模式：1 / 2 同 g_dm_present_link，3 = 省电模式 30 Hz | Current mode of the display link object: 1 / 2 same as g_dm_present_link, 3 = power-saving mode 30 Hz
@@ -13085,9 +13110,13 @@ int mtl_link_wait_tick(uint64_t timeout_ns, unsigned frame_ticks) {
        every frame turned MetalFX frame interpolation's 50 fps into 18 (2026-10-16 night, mfiA1), and the presents are
        dropped by mtl_present_wait's fallback anyway. The wait resumes with the first callback. */
     if (g_link_tick_ns && now_ns() - __atomic_load_n(&g_link_tick_ns, __ATOMIC_RELAXED) > STALL_NS) return 0;
-    /* TOTK: a frame occupies frame_ticks 60 Hz ticks (the game's present interval); the variable-frame-rate step
-       advances game time by exactly that interval, so presenting faster would speed the game up. */
-    const uint64_t step = (uint64_t)(g_dm_present_link == 2 ? 2 : 1) * (frame_ticks ? frame_ticks : 1);   // 一帧占几拍：游戏出图间隔 × 每个 60 Hz 节拍对应的节拍数（120 Hz 节拍为 2） | Ticks per frame: the game's present interval times display-link ticks per 60 Hz tick (2 at 120 Hz)
+    /* TOTK: a frame occupies frame_ticks ticks of the pacing clock (the game's present interval); the display link
+       ticks at its own rate, so a frame takes that many link ticks when the link runs faster than the pacing clock
+       (mode 2) and one link tick per pacing tick otherwise. The variable-frame-rate step advances game time by
+       exactly the frame's period, so presenting faster would speed the game up. */
+    uint64_t step = frame_ticks ? frame_ticks : 1;
+    int pacing = nvn_pacing_hz();
+    if (pacing > 0 && g_link_hz > pacing) step = step * (uint64_t)g_link_hz / (uint64_t)pacing;
     pthread_mutex_lock(&g_link_mu);
     if (g_link_tick_n >= started_tick + step) { started_tick = g_link_tick_n; pthread_mutex_unlock(&g_link_mu); return 1; }
     struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
