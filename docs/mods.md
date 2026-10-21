@@ -122,7 +122,6 @@ the app runs.
 A build does not write to the version folder (`~/Library/Application Support/MacNativeGames/TOTK/mods/<version>`)
 unless this flag is given: the folder may hold another mod's files, or files copied by hand. With the flag, the
 build replaces it with the mod's `romfs/` and writes its `manifest.tsv`:
-
 ```bash
 python3.14 build_app.py "/path/to/Tears of the Kingdom.xci" -k "/path/to/prod.keys" \
   --mod "/path/to/Mod" --install-mod-romfs
@@ -167,6 +166,25 @@ manifest by hand.
 Nothing changes at run time: the game loads this folder and its manifest as before. The iPhone / iPad build has
 no player mod folder yet, so there `--mod` merges the code patches only (and `--install-mod-romfs` is refused
 there: there is no folder to fill).
+
+<a id="manager"></a>
+### The mod manager (in the app)
+
+The launcher can also do this without a build: hold **Option (⌥)** while opening the game (or press **⌘,** in the
+game's menu) for the settings window, and press **Mods…** there. The window lists the mods you have installed,
+lets you turn each one on or off, and installs a new one from a folder you pick ("Install a mod…"). Turning a mod
+on or off rewrites the version folder the game loads (`~/Library/Application Support/MacNativeGames/TOTK/mods/<version>`)
+and its `manifest.tsv`, so the change is in effect at the next start.
+
+The installed mods live in a library next to it (`~/Library/Application Support/MacNativeGames/TOTK/mods-library/<version>/<name>/`),
+each in the same layout `--mod` takes: `romfs/` for the data files, `exefs/` for the code patches. The manager
+copies the `romfs/` half into the version folder and writes the manifest against the app's own RomFS, exactly as
+`make_mod_manifest.py` does at build time; a file the app replaces itself is left out (the app's own file is used),
+and the window says so.
+
+A mod's **code** half cannot be applied while the game runs: the code modules are rewritten for Apple silicon when
+the app is built and bound by SHA-256, so a code patch needs a build with `--mod`. The manager says that too, rather
+than pretending the patch is in effect.
 
 What the build does, in order:
 

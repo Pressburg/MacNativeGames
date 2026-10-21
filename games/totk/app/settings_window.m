@@ -5,6 +5,7 @@
    so a later change of a default in the runtime reaches the player. A setting the environment already gives (open --env)
    is shown but cannot be changed here: the environment wins at launch. Text is Chinese or English (TOTK_UI). */
 #import "settings_window.h"
+#import "mod_manager.h"
 #include "game_version.h"
 #include "include/totk_ui_lang.h"
 #include "launch_settings.h"
@@ -240,6 +241,10 @@ static NSString *const kPicture = @"picture";   /* one control for TOTK_MFX_UPSC
     if (self.editOnly) self.save.toolTip = UI("保存后，退出游戏（⌘Q）再重新打开即可生效。", "Saved settings apply after you quit the game (⌘Q) and open it again.");
     self.save.keyEquivalent = @"\r";
     NSStackView *buttons = [NSStackView new];
+    NSButton *mods = [NSButton buttonWithTitle:UI("模组…", "Mods…") target:self action:@selector(mods:)];
+    mods.toolTip = UI("安装、开启或关闭 RomFS（数据）模组。代码补丁要在构建时用 --mod 合并，App 运行时不能改代码。",
+                      "Install, turn on or off the RomFS (data) mods. A code patch is merged at build time with --mod: the app cannot change code while it runs.");
+    [buttons addView:mods inGravity:NSStackViewGravityLeading];
     [buttons addView:reset inGravity:NSStackViewGravityLeading];
     for (NSButton *b in self.editOnly ? @[quit, self.save] : @[quit, self.once, self.save]) [buttons addView:b inGravity:NSStackViewGravityTrailing];
     [buttons.widthAnchor constraintEqualToConstant:660].active = YES;
@@ -336,6 +341,15 @@ static NSString *const kPicture = @"picture";   /* one control for TOTK_MFX_UPSC
 }
 - (void)controlTextDidChange:(NSNotification *)n { [self textChanged:n.object]; }
 - (void)reset:(id)sender { (void)sender; [self.values removeAllObjects]; self.highlight = nil; [self load]; }
+
+/* The mod manager (app/mod_manager.m): the RomFS (data) mods, in the folder the game loads. */
+- (void)mods:(id)sender {
+    (void)sender;
+    NSString *data = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/MacNativeGames/" GAME_FOLDER];
+    NSString *version = @TOTK_GAME_DIR;
+    mod_manager_show([data stringByAppendingPathComponent:[@"mods/" stringByAppendingPathComponent:version]],
+                     [data stringByAppendingPathComponent:[@"mods-library/" stringByAppendingPathComponent:version]], version);
+}
 - (void)finish:(LaunchChoice)choice { self.choice = choice; [NSApp stopModalWithCode:choice]; [self.window orderOut:nil]; }
 - (void)quit:(id)sender { (void)sender; [self finish:LaunchQuit]; }
 - (void)launchOnce:(id)sender { (void)sender; [self.window makeFirstResponder:nil]; [self finish:LaunchOnce]; }
