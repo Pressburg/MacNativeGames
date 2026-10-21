@@ -10877,6 +10877,26 @@ static int texels_gpu_region(const tex_t *t,unsigned level,unsigned layer0,const
     atomic_fetch_add(to_linear?&g_texels_gpu_reads:&g_texels_gpu_writes,1);atomic_fetch_add(&g_texels_gpu_bytes,total);
     return 1;
 } }
+/* TOTK: CPU texel reads / writes of mirrored textures, per path: calls, region bytes, time and the longest call, logged
+   every 5 s when any ran (0 read by region, 1 write by region, 2 read whole level, 3 write whole level). Several guest
+   threads call these; the counters are atomic and the line is printed by whichever call crosses the 5 s mark. */
+static _Atomic uint64_t g_tx_n[4], g_tx_bytes[4], g_tx_ticks[4], g_tx_max[4], g_tx_last;
+static void texels_note(int k, const tex_t *t, const NVNcopyRegion *r, uint64_t ticks) {
+    int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
+    uint64_t bytes = (uint64_t)((r->width + bw - 1) / bw) * bpb * ((r->height + bh - 1) / bh) * (r->depth ? r->depth : 1);
+    atomic_fetch_add(&g_tx_n[k], 1); atomic_fetch_add(&g_tx_bytes[k], bytes); atomic_fetch_add(&g_tx_ticks[k], ticks);
+    for (uint64_t m = atomic_load(&g_tx_max[k]); ticks > m && !atomic_compare_exchange_weak(&g_tx_max[k], &m, ticks);) {}
+    static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
+    uint64_t now = mach_absolute_time(), last = atomic_load(&g_tx_last), five = 5000000000ull * tb.denom / tb.numer;
+    if (now - last < five || !atomic_compare_exchange_strong(&g_tx_last, &last, now)) return;
+    static const char *const what[4] = {"读 按区域", "写 按区域", "读 整级", "写 整级"};
+    char line[512]; size_t o = 0;
+    for (int i = 0; i < 4; i++) {
+        uint64_t n = atomic_exchange(&g_tx_n[i], 0), b = atomic_exchange(&g_tx_bytes[i], 0), s = atomic_exchange(&g_tx_ticks[i], 0), mx = atomic_exchange(&g_tx_max[i], 0);
+        if (n) o += snprintf(line + o, sizeof line - o, " %s %llu 次 / %.1f MB / 共 %.2f ms / 最长 %.2f ms；", what[i], (unsigned long long)n, b / 1048576.0, s * tb.numer / tb.denom / 1e6, mx * tb.numer / tb.denom / 1e6);
+    }
+    if (o) MLOG("[texels] 近 5 秒 CPU 读写贴图：%s", line);
+}
 void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst, size_t row, size_t img) {
     xv_check(t->serial, level, layer0, "CPU读回");
     PD("U cpu_read ser=%llu lv%u sl%u xyz=%d,%d,%d size=%d,%d,%d dst=%p row=%lu img=%lu", t->serial, level, layer0, r->xoffset, r->yoffset, r->zoffset, r->width, r->height, r->depth, dst, (unsigned long)row, (unsigned long)img);
@@ -10893,6 +10913,14 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer0, const NVNc
     if (gpu_content) { static int n; if (++n <= 8) MLOG("[texels] ReadTexels ser=%llu %ux%u nvnfmt=%#x lv%u: rendered by the GPU, read back from the Metal texture (%d so far)", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format, level, n); }
     if (tex_mirrored(t) && !gpu_content) {
         if (texels_gpu_region(t,level,layer0,r,dst,row,img,1)) return;
+        /* TOTK: only the region's bytes are read, by block-linear address (nvn_bl_region), as nxnative's WriteTexels does:
+           decoding the whole level for a small region kept a guest thread on its virtual core for tens of ms, and the
+           presenting thread waited for that core (the stalls on the starting sky island). Linear storage and anything
+           nvn_bl_region does not take fall through to the whole-level path below. */
+        uint64_t t0 = mach_absolute_time(); int ok = 1;
+        if (is3d) ok = !nvn_bl_region(&t->d, level, 0, t->mem, (uint32_t)x0, (uint32_t)y0, (uint32_t)r->zoffset, (uint32_t)wb, (uint32_t)hb, (uint32_t)nz, dst, row, img, 1, NULL, NULL);
+        else for (int z = 0; z < nz && ok; z++) ok = !nvn_bl_region(&t->d, level, layer0 + r->zoffset + z, t->mem, (uint32_t)x0, (uint32_t)y0, 0, (uint32_t)wb, (uint32_t)hb, 1, dst + z * img, row, img, 1, NULL, NULL);
+        if (ok) { texels_note(0, t, r, mach_absolute_time() - t0); return; }
         uint32_t lw = MAX(t->d.width >> level, 1u), lh = MAX(t->d.height >> level, 1u), lz = is3d ? MAX(t->d.depth >> level, 1u) : 1;
         size_t lp = (size_t)((lw + bw - 1) / bw) * bpb, lr = (lh + bh - 1) / bh;
         uint8_t *lin = malloc(lp * lr * lz);
@@ -10903,6 +10931,7 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer0, const NVNc
             for (size_t y = 0; y < hb; y++) memcpy(dst + z * img + y * row, src + (y0 + y) * lp + x0, wb);
         }
         free(lin);
+        texels_note(2, t, r, mach_absolute_time() - t0);
         return;
     }
     id<MTLTexture> mt = tex_mtl(t);
@@ -10931,6 +10960,13 @@ void mtl_write_texels(const tex_t *t, unsigned level, unsigned layer0, const NVN
     if (tex_mirrored(t)) {
         dm_guest_write_prepare(t->mem, t->L.size);
         if (!texels_gpu_region(t,level,layer0,r,(void *)src,row,img,0)) {
+            /* TOTK: the region's bytes are written by block-linear address, without decoding and re-encoding the whole
+               level (nxnative's WriteTexels, write_region_bl). Linear storage falls through to the whole-level path. */
+            uint64_t t0 = mach_absolute_time(); int ok = 1;
+            if (is3d) ok = !nvn_bl_region(&t->d, level, 0, t->mem, (uint32_t)x0, (uint32_t)y0, (uint32_t)r->zoffset, (uint32_t)wb, (uint32_t)hb, (uint32_t)nz, (uint8_t *)src, row, img, 0, NULL, NULL);
+            else for (int z = 0; z < nz && ok; z++) ok = !nvn_bl_region(&t->d, level, layer0 + r->zoffset + z, t->mem, (uint32_t)x0, (uint32_t)y0, 0, (uint32_t)wb, (uint32_t)hb, 1, (uint8_t *)src + z * img, row, img, 0, NULL, NULL);
+            if (ok) texels_note(1, t, r, mach_absolute_time() - t0);
+            else {
             size_t lp = (size_t)((lw + bw - 1) / bw) * bpb, lr = (lh + bh - 1) / bh;
             uint8_t *lin = malloc(lp * lr * lz);
             if (!lin) die("WriteTexels: out of memory");
@@ -10942,6 +10978,8 @@ void mtl_write_texels(const tex_t *t, unsigned level, unsigned layer0, const NVN
                 if (!is3d || z == nz - 1) if (nvn_swizzle(&t->d, level, layer, lin, lp, t->mem)) die("WriteTexels: unsupported layout");
             }
             free(lin);
+            texels_note(3, t, r, mach_absolute_time() - t0);
+            }
         }
         /* TOTK: a mirrored texture the GPU has rendered into is never re-uploaded from its pool bytes (tex_mtl), so the
            write goes into the MTLTexture as well (below); the pool bytes stay in step for texture objects created later. */
