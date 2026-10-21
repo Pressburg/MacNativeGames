@@ -30,6 +30,10 @@ static const LaunchValue *find(const LaunchValue *v, const char *name) {
 
 int main(void) {
     check(ok("TOTK_UNCAPPED", "0") && ok("TOTK_UNCAPPED", "1") && !ok("TOTK_UNCAPPED", "yes") && !ok("TOTK_UNCAPPED", ""), "booleans");
+    check(ok("TOTK_PRESENT_MODE", "uncapped") && ok("TOTK_PRESENT_MODE", "display") && ok("TOTK_PRESENT_MODE", "game")
+          && !ok("TOTK_PRESENT_MODE", "locked") && !ok("TOTK_PRESENT_MODE", "Display"), "presentation mode");
+    check(ok("TOTK_GPU_BUDGET_MB", "5000") && ok("TOTK_GPU_BUDGET_MB", "24000") && !ok("TOTK_GPU_BUDGET_MB", "999")
+          && !ok("TOTK_GPU_BUDGET_MB", "5000MB") && !ok("TOTK_GPU_BUDGET_MB", ""), "GPU memory budget");
     check(ok("TOTK_UNCAPPED_HZ", "display") && ok("TOTK_UNCAPPED_HZ", "30") && ok("TOTK_UNCAPPED_HZ", "120") && ok("TOTK_UNCAPPED_HZ", "60"), "frame cap accepted");
     check(!ok("TOTK_UNCAPPED_HZ", "29") && !ok("TOTK_UNCAPPED_HZ", "121") && !ok("TOTK_UNCAPPED_HZ", "60hz") && !ok("TOTK_UNCAPPED_HZ", "Display"), "frame cap refused");
     check(ok("TOTK_MFX", "0") && ok("TOTK_MFX", "interp30") && ok("TOTK_MFX", "interp") && ok("TOTK_MFX", "interpmax") && !ok("TOTK_MFX", "1"), "frame interpolation (totk_mfx.m mfx_init)");

@@ -104,6 +104,21 @@ static NSString *const kPicture = @"picture";   /* one control for TOTK_MFX_UPSC
     self.tabs = [NSTabView new];
 
     NSMutableArray *rows = [NSMutableArray array];   /* ---- performance ---- */
+    [self row:rows tab:0 name:@"TOTK_PRESENT_MODE" label:UI("出图节奏", "Presentation")
+      control:[self popup:@"TOTK_PRESENT_MODE" items:@[@[UI("不限帧（默认）", "Uncapped (default)"), @""],
+                                                         @[UI("跟随显示器刷新率", "Follow the display's rate"), @"display"],
+                                                         @[UI("保持主机帧率", "The console's frame rate"), @"game"]]]
+         help:UI("不限帧：游戏按自己的时钟跑，显示器每次刷新显示最新一帧。跟随显示器：每个刷新出一帧，帧率等于屏幕的刷新率。保持主机帧率：游戏按 60 帧跑，一帧占多个刷新。",
+                 "Uncapped: the game runs on its own clock and each refresh shows the newest frame. Follow the display: one frame per refresh, at the screen's refresh rate. The console's frame rate: the game runs at 60 fps and every frame stands for several refreshes.")
+          tip:UI("屏幕刷新率高于 60 Hz 时，“保持主机帧率”让游戏里按帧计数的界面（地图光标等）和主机上一样快。",
+                 "Above 60 Hz, \"the console's frame rate\" keeps the game's frame-counted UI (the map cursor and the like) as fast as on the console.")];
+    [self row:rows tab:0 name:@"TOTK_GPU_BUDGET_MB" label:UI("显存预算", "GPU memory budget")
+      control:[self popup:@"TOTK_GPU_BUDGET_MB" items:@[@[UI("自动（本机内存的 30%）", "Automatic (30 % of the memory)"), @""],
+                                                          @[@"5000", @"5000"], @[@"8000", @"8000"], @[@"12000", @"12000"],
+                                                          @[@"16000", @"16000"], @[@"24000", @"24000"]]]
+         help:UI("Metal 已分配的显存超过这个数时游戏会停止，留出系统内存。自动是本机内存的 30%，最低 5,000 MB。",
+                 "The game stops when Metal has allocated more GPU memory than this, so the system keeps some. Automatic is 30 % of the Mac's memory, at least 5,000 MB.")
+          tip:UI("内存大的机器可以调高；调太低会让游戏在长时间游玩后停止。", "A Mac with more memory can raise it; too low stops the game after a long session.")];
     [self row:rows tab:0 name:@"TOTK_UNCAPPED" label:UI("不限帧率", "Uncapped")
       control:[self check:@"TOTK_UNCAPPED" title:UI("不等显示器刷新", "Don't wait for the display")]
          help:UI("游戏按自己的时钟运行，显示器每次刷新显示最新的一帧。", "The game runs on its own clock; each screen refresh shows the newest frame.")

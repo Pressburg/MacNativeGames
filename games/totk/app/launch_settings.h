@@ -66,6 +66,14 @@ static inline const char *launch_check_face(const char *v) {
 }
 /* fps_overlay.c hud_compact: anything but "corners" is the default box, so only "corners" is saved */
 static inline const char *launch_check_hud(const char *v) { return !strcmp(v, "corners") ? NULL : "must be corners"; }
+/* hle_nvn.c present_cfg: the pacing mode (uncapped / display / game) */
+static inline const char *launch_check_present_mode(const char *v) {
+    return !strcmp(v, "uncapped") || !strcmp(v, "display") || !strcmp(v, "game") ? NULL : "must be uncapped, display or game";
+}
+/* app/launcher.m: the GPU memory budget in MB (the launcher sets 30 % of the memory when this is unset) */
+static inline const char *launch_check_budget(const char *v) {
+    return launch_whole_int(v, 1000, 100000, NULL) ? NULL : "must be a number of MB from 1000 to 100000";
+}
 /* aspect_patch.h aspect_requested ("0" is the default and is not saved) */
 static inline const char *launch_check_aspect(const char *v) {
     double a = 0, w, h; char rest;
@@ -89,10 +97,12 @@ static inline const char *launch_check_ui_lang(const char *v) { return !strcmp(v
 /* def: what the runtime does when the variable is unset, as the value that means the same (for the window and the log). */
 typedef struct { const char *name, *def; LaunchCheck check; } LaunchSetting;
 static const LaunchSetting launch_settings[] = {
+    {"TOTK_PRESENT_MODE", "uncapped", launch_check_present_mode},  /* hle_nvn.c present_cfg */
     {"TOTK_UNCAPPED", "1", launch_check_bool},            /* hle_nvn.c present_cfg */
     {"TOTK_UNCAPPED_HZ", "120", launch_check_hz},         /* hle_nvn.c uncapped_cap */
     {"TOTK_UNCAPPED_INTERVAL", LAUNCH_BOTW ? "1" : "0", launch_check_bool},   /* nvn_obj.h UNCAPPED_INTERVAL_FROM_ENV */
     {"TOTK_GPU_KEEPALIVE", "1", launch_check_bool},       /* nvn_mtl.m keepalive_start */
+    {"TOTK_GPU_BUDGET_MB", "", launch_check_budget},       /* app/launcher.m: 30 % of the memory when unset */
     {"TOTK_MFX", "0", launch_check_mfx},                  /* totk_mfx.m mfx_init */
 #if !LAUNCH_BOTW
     {"TOTK_FPS60", "1", launch_check_bool},               /* game_patches.c fps60_enabled, game_patches_v143.c */
