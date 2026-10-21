@@ -241,10 +241,12 @@ static NSString *const kPicture = @"picture";   /* one control for TOTK_MFX_UPSC
     if (self.editOnly) self.save.toolTip = UI("保存后，退出游戏（⌘Q）再重新打开即可生效。", "Saved settings apply after you quit the game (⌘Q) and open it again.");
     self.save.keyEquivalent = @"\r";
     NSStackView *buttons = [NSStackView new];
-    NSButton *mods = [NSButton buttonWithTitle:UI("模组…", "Mods…") target:self action:@selector(mods:)];
-    mods.toolTip = UI("安装、开启或关闭 RomFS（数据）模组。代码补丁要在构建时用 --mod 合并，App 运行时不能改代码。",
-                      "Install, turn on or off the RomFS (data) mods. A code patch is merged at build time with --mod: the app cannot change code while it runs.");
-    [buttons addView:mods inGravity:NSStackViewGravityLeading];
+    if (!self.editOnly) {   // the game checks the mod files while it runs: changing them would stop it
+        NSButton *mods = [NSButton buttonWithTitle:UI("模组…", "Mods…") target:self action:@selector(mods:)];
+        mods.toolTip = UI("安装、开启或关闭 RomFS（数据）模组。代码补丁要在构建时用 --mod 合并，App 运行时不能改代码。",
+                          "Install, turn on or off the RomFS (data) mods. A code patch is merged at build time with --mod: the app cannot change code while it runs.");
+        [buttons addView:mods inGravity:NSStackViewGravityLeading];
+    }
     [buttons addView:reset inGravity:NSStackViewGravityLeading];
     for (NSButton *b in self.editOnly ? @[quit, self.save] : @[quit, self.once, self.save]) [buttons addView:b inGravity:NSStackViewGravityTrailing];
     [buttons.widthAnchor constraintEqualToConstant:660].active = YES;
