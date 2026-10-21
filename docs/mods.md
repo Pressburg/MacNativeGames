@@ -181,7 +181,9 @@ What the build does, in order:
      runtime compares (40 hex digits; the runtime's own `TOTK_PCHTXT` experiment takes only that longer
      form). Patch lines `<hex main address> <hex bytes>` follow, and only lines after `@enabled` count:
      `@disabled` switches the following section off again (a file that keeps an edit around without applying
-     it), `@enabled` switches it back on, and `@stop` ends the file. A `@flag offset_shift 0x100` line must
+     it), `@enabled` switches it back on, and `@stop` ends the section - not the file, so a mod may ship several
+     sections in one file (theboy181's "Visual Improvements" holds the depth-of-field removal and the lens flare
+     removal in one). A `@flag offset_shift 0x100` line must
      come before the first patch line - it says the addresses leave out the 0x100-byte NSO header an IPS form
      counts, which is how they are applied; a file without it, or with another shift, is refused by file and
      line rather than patched 0x100 bytes off. `@flag print_values` (a display option of the patching tools,
@@ -481,7 +483,9 @@ App 自己会替换的文件），它其实什么都没替换——这时构建�
    - `.pchtxt`：社区文本格式，读取规则和运行时一致。第一行必须是 `@nsobid-<build id>`：改写器表里用的
      16 字节（32 位十六进制）或运行时比较的 20 字节（40 位十六进制；运行时自己的 `TOTK_PCHTXT` 实验只认长
      的这种）。后面是 `<十六进制主地址> <十六进制字节>` 行，只有 `@enabled` 之后的行生效：`@disabled` 把后面的
-     段落重新关掉（作者留着但不启用某段改动的写法），`@enabled` 再打开，`@stop` 结束整个文件。第一条补丁行之前
+     段落重新关掉（作者留着但不启用某段改动的写法），`@enabled` 再打开，`@stop` 结束的是这一段、不是整个文件：
+     所以一个文件里可以有多个段落（theboy181 的 "Visual Improvements" 就把去景深和去镜头光晕写在同一个文件里）。
+     第一条补丁行之前
      必须有 `@flag offset_shift 0x100`（说明这些地址不含 IPS 算法里的 0x100 字节 NSO 头，构建正是这样打的）；
      没有这一行、或者是别的位移值，都按文件和行号拒绝，而不是打偏 0x100 字节。`@flag print_values`（补丁工具的
      显示选项，我们见过的社区 pchtxt 都带）可以出现；其它 flag 会拒绝。`@nsobid-` 那一行决定目标 build，所以文件名任意。

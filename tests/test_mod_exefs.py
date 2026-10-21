@@ -220,6 +220,27 @@ class Case(unittest.TestCase):
         self.apply()
         self.assertEqual(image_of(self.output.read_bytes())[0x40:0x44], b'\xaa\xbb\xcc\xdd')
 
+    def test_pchtxt_stop_ends_the_section_not_the_file(self):
+        # a mod may ship several sections in one file (theboy181's "Visual Improvements" holds the depth-of-field
+        # removal and the lens flare removal in one): @stop ends the section, the next @enabled opens the next one
+        self.retail()
+        text = (f'@nsobid-{BUILD_ID.hex()}\n@flag offset_shift 0x100\n@enabled\n40 aabbccdd\n@stop\n'
+                f'\\Lens flare removal\n@enabled\n50 eeff0011\n@stop\n')
+        self.patch(text)
+        self.apply()
+        image = image_of(self.output.read_bytes())
+        self.assertEqual(image[0x40:0x44], b'\xaa\xbb\xcc\xdd')
+        self.assertEqual(image[0x50:0x54], b'\xee\xff\x00\x11')
+
+    def test_pchtxt_a_line_after_stop_without_enabled_is_not_applied(self):
+        self.retail()
+        text = (f'@nsobid-{BUILD_ID.hex()}\n@flag offset_shift 0x100\n@enabled\n40 aabbccdd\n@stop\n50 eeff0011\n')
+        self.patch(text)
+        self.apply()
+        image = image_of(self.output.read_bytes())
+        self.assertEqual(image[0x40:0x44], b'\xaa\xbb\xcc\xdd')
+        self.assertEqual(image[0x50:0x54], TEXT[0x50:0x54])
+
     def test_pchtxt_malformed_line_is_refused(self):
         self.retail()
         self.patch(pchtxt([(0x40, b'\xaa')]).replace(f'40 aa', '40 zz'))

@@ -256,11 +256,14 @@ def parse_pchtxt(text, identity, path):
         if line.startswith('@disabled'):
             enabled = False
             continue
+        if line.startswith('@stop'):
+            # @stop ends the section, not the file: a mod may ship several sections in one file (theboy181's
+            # "Visual Improvements" holds the depth-of-field removal and the lens flare removal in one).
+            enabled = False
+            continue
         if line.startswith('@flag'):
             shifted = _check_pchtxt_flag(line.split(), path, number) or shifted
             continue
-        if line.startswith('@stop'):
-            break
         if not enabled or line.startswith('@') or not line:
             continue
         fields = line.split()

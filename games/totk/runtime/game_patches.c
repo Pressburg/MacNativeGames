@@ -503,7 +503,8 @@ static void patch_pchtxt(Module *m) {
             matched = 1; continue;
         }
         if (!strncmp(line, "@enabled", 8)) { enabled = 1; continue; }
-        if (!strncmp(line, "@stop", 5)) break;
+        if (!strncmp(line, "@stop", 5)) { enabled = 0; continue; }   /* ends the section, not the file: a mod may
+                                                                        ship several sections in one file */
         unsigned long long at; char hex[512];
         if (!enabled || line[0] == '@' || sscanf(line, "%llx %511s", &at, hex) != 2) continue;
         size_t len = strlen(hex);
