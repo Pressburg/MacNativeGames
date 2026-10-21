@@ -108,9 +108,10 @@ static NSString *const kPicture = @"picture";   /* one control for TOTK_MFX_UPSC
     [self row:rows tab:0 name:@"TOTK_PRESENT_MODE" label:UI("出图节奏", "Presentation")
       control:[self popup:@"TOTK_PRESENT_MODE" items:@[@[UI("不限帧（默认）", "Uncapped (default)"), @""],
                                                          @[UI("跟随显示器刷新率", "Follow the display's rate"), @"display"],
-                                                         @[UI("保持主机帧率", "The console's frame rate"), @"game"]]]
-         help:UI("不限帧：游戏按自己的时钟跑，显示器每次刷新显示最新一帧。跟随显示器：每个刷新出一帧，帧率等于屏幕的刷新率。保持主机帧率：游戏按 60 帧跑，一帧占多个刷新。",
-                 "Uncapped: the game runs on its own clock and each refresh shows the newest frame. Follow the display: one frame per refresh, at the screen's refresh rate. The console's frame rate: the game runs at 60 fps and every frame stands for several refreshes.")
+                                                         @[UI("保持主机帧率", "The console's frame rate"), @"game"],
+                                                         @[UI("一帧一次上屏", "One frame per screen, no frame dropped"), @"locked"]]]
+         help:UI("不限帧：游戏按自己的时钟跑，显示器每次刷新显示最新一帧。跟随显示器：每个刷新出一帧，帧率等于屏幕的刷新率。保持主机帧率：游戏按 60 帧跑，一帧占多个刷新。一帧一次上屏：游戏每画完一帧就等显示器取走，显卡每次刷新只做一帧，不丢帧。",
+                 "Uncapped: the game runs on its own clock and each refresh shows the newest frame. Follow the display: one frame per refresh, at the screen's refresh rate. The console's frame rate: the game runs at 60 fps and every frame stands for several refreshes. One frame per screen: the game waits for the display to take each frame it drew, so the GPU does one frame of work per refresh and nothing is dropped.")
           tip:UI("屏幕刷新率高于 60 Hz 时，“保持主机帧率”让游戏里按帧计数的界面（地图光标等）和主机上一样快。",
                  "Above 60 Hz, \"the console's frame rate\" keeps the game's frame-counted UI (the map cursor and the like) as fast as on the console.")];
     [self row:rows tab:0 name:@"TOTK_GPU_BUDGET_MB" label:UI("显存预算", "GPU memory budget")

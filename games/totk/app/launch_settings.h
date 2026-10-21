@@ -66,9 +66,10 @@ static inline const char *launch_check_face(const char *v) {
 }
 /* fps_overlay.c hud_compact: anything but "corners" is the default box, so only "corners" is saved */
 static inline const char *launch_check_hud(const char *v) { return !strcmp(v, "corners") ? NULL : "must be corners"; }
-/* hle_nvn.c present_cfg: the pacing mode (uncapped / display / game) */
+/* hle_nvn.c present_cfg: the pacing mode (uncapped / display / game / locked) */
 static inline const char *launch_check_present_mode(const char *v) {
-    return !strcmp(v, "uncapped") || !strcmp(v, "display") || !strcmp(v, "game") ? NULL : "must be uncapped, display or game";
+    return !strcmp(v, "uncapped") || !strcmp(v, "display") || !strcmp(v, "game") || !strcmp(v, "locked")
+               ? NULL : "must be uncapped, display, game or locked";
 }
 /* app/launcher.m: the GPU memory budget in MB (the launcher sets 30 % of the memory when this is unset) */
 static inline const char *launch_check_budget(const char *v) {

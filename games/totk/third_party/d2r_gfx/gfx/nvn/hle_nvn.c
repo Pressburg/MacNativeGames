@@ -2345,10 +2345,15 @@ static int g_present_mode;  // TOTK_PRESENT_MODE (PRESENT_*), see present_cfg
                       rate, which above 60 Hz is faster than on the console.
    game                the game keeps the console's frame rate (60 fps with the 60 fps patch, 30 where the game asks
                       for it) and every frame is shown for as many refreshes as it takes. The frame-counted UI of the
-                      game then behaves exactly as on the console, at any refresh rate. */
+                      game then behaves exactly as on the console, at any refresh rate.
+   locked              the frame lock (the owner's own patch): the game waits for the display link to take the frame
+                      it just drew, so the GPU does exactly one frame of work per refresh and nothing is dropped.
+                      The frame rate is the display's; the real-time frame step keeps the game's clock at its normal
+                      speed. */
 #define PRESENT_UNCAPPED 0
 #define PRESENT_DISPLAY 1
 #define PRESENT_GAME 2
+#define PRESENT_LOCKED 3
 #define PRESENT_MAX_HZ 120   // the real-time frame step clamps a frame to at least 1/120 s: above this the game runs fast
 #include "totk_mfx_mode.h"   /* totk_mfx.m: frame interpolation mode of this game frame (TOTK_MFX, key 2) */
 /* TOTK: frame interpolation at 30 fps or at half the refresh rate paces the game itself, so it suspends the uncapped mode;
@@ -2401,7 +2406,7 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
         static uint64_t rt_period; uint64_t period = present_period(o);
         if (period && rt_period != period) { rt_period = period; set_time_constraint(period); }
         rt_comp_tick(period);
-        if (mtl_link_active() && !uncapped_now() && !nvn_own_clock()) { if (!mtl_link_wait_tick(period ? 2 * period : 33333333ull, present_ticks(o)) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
+        if (mtl_link_active() && !uncapped_now() && !nvn_own_clock() && !mtl_frame_lock_on()) { if (!mtl_link_wait_tick(period ? 2 * period : 33333333ull, present_ticks(o)) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
         else if (wait) sleep_until_ns(at);
     } else {   // DM_DETCLOCK_PACE=1（画面闸门用）：客体时钟按帧走的同时，每帧墙钟不短于一个步长——帧数与游戏内时间确定，后台加载线程每帧至少有一个步长的墙钟可用； | DM_DETCLOCK_PACE=1 (used by the screenshot gate): while the guest clock advances per frame, each frame's wall clock is no shorter than one step -- frame count and in-game time are deterministic, and the background loading thread has at least one step of wall clock available per frame;
                // 机器满载时帧只会更慢、后台得到的墙钟只会更多，所以「消息后第 N 帧」截到的画面与负载无关
@@ -2734,7 +2739,8 @@ static void present_cfg(const win_t *o) {
         if (!strcmp(pm, "uncapped")) g_present_mode = PRESENT_UNCAPPED;
         else if (!strcmp(pm, "display")) g_present_mode = PRESENT_DISPLAY;
         else if (!strcmp(pm, "game")) g_present_mode = PRESENT_GAME;
-        else LOG("[nvn] 【错误】TOTK_PRESENT_MODE=%s 不是已知的模式（uncapped / display / game），按默认的 uncapped 继续", pm);
+        else if (!strcmp(pm, "locked")) g_present_mode = PRESENT_LOCKED;
+        else LOG("[nvn] 【错误】TOTK_PRESENT_MODE=%s 不是已知的模式（uncapped / display / game / locked），按默认的 uncapped 继续", pm);
     } else if (!g_uncapped) g_present_mode = PRESENT_GAME;
     if (g_present_mode == PRESENT_UNCAPPED) {
         g_uncapped = 1;
@@ -2746,11 +2752,16 @@ static void present_cfg(const win_t *o) {
         g_uncapped = 0;
         /* The display mode presents one frame per refresh, so its clock is the display's rate; the game mode keeps
            the console's rate and lets every frame stand for as many refreshes as it takes. */
-        g_pacing_hz = g_present_mode == PRESENT_DISPLAY ? (g_paced_hz > PRESENT_MAX_HZ ? PRESENT_MAX_HZ : g_paced_hz)
-                                                         : (g_explicit_hz ? g_hz : 60);
+        g_pacing_hz = (g_present_mode == PRESENT_DISPLAY || g_present_mode == PRESENT_LOCKED)
+                          ? (g_paced_hz > PRESENT_MAX_HZ ? PRESENT_MAX_HZ : g_paced_hz)
+                          : (g_explicit_hz ? g_hz : 60);
         LOG("[nvn] 出图节拍 %d Hz，模式 %s（%s）", g_hz,
-            g_present_mode == PRESENT_DISPLAY ? "display（每个刷新出一帧）" : "game（主机帧率，一帧占多个刷新）",
-            g_present_mode == PRESENT_DISPLAY ? (g_paced_hz > PRESENT_MAX_HZ ? "屏幕刷新率，但实时帧步进把帧率封在 120" : "屏幕刷新率") : "主机帧率 60");
+            g_present_mode == PRESENT_DISPLAY ? "display（每个刷新出一帧）"
+                : g_present_mode == PRESENT_LOCKED ? "locked（一帧一次上屏，显卡每刷新只做一帧）"
+                : "game（主机帧率，一帧占多个刷新）",
+            (g_present_mode == PRESENT_DISPLAY || g_present_mode == PRESENT_LOCKED)
+                ? (g_paced_hz > PRESENT_MAX_HZ ? "屏幕刷新率，但实时帧步进把帧率封在 120" : "屏幕刷新率")
+                : "主机帧率 60");
     }
     if (!g_hz) LOG("[nvn] 【警告】DM_PRESENT_HZ=0：不限帧率，帧节奏非真机，界面逻辑可能偏离（仅供性能剖析，不能用于判据 / 对拍）");
     // 剪口（有意偏离原版行为）：DM_PRESENT_INTERVAL=display 时不按游戏设的出图间隔，每个节拍出一帧，

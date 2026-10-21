@@ -12891,6 +12891,20 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
 static CAMetalDisplayLink *g_link; static CFRunLoopRef g_link_rl; static int g_link_started;
 static int g_link_owns_layer, g_classic_busy;   // 持 g_pq_mu：图层挂着节拍对象期间 nextDrawable 会抛异常，自取 drawable 的出图线程与节拍对象互斥 | Under g_pq_mu: nextDrawable throws while the layer has the display link object attached, so the present thread that takes its own drawable and the display link object are mutually exclusive
 static int link_on(void) { return g_dm_present_link && g_link != nil; }
+/* The frame lock: the game waits for the display link to take the frame it just queued (one frame of work per
+   refresh). It is the "locked" presentation mode (TOTK_PRESENT_MODE=locked) and can be asked for on its own with
+   TOTK_FRAME_LOCK=1. Off by default: the uncapped mode is the port's own behaviour. */
+static int frame_lock_on(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("TOTK_FRAME_LOCK"), *m = getenv("TOTK_PRESENT_MODE");
+        v = (e && !strcmp(e, "1")) || (m && !strcmp(m, "locked")) ? 1 : 0;
+        MLOG("帧锁 %s：游戏每帧等显示节拍取走这一帧（一帧一次上屏，不丢帧）；TOTK_PRESENT_MODE=locked 或 TOTK_FRAME_LOCK=1 打开",
+             v ? "开" : "关");
+    }
+    return v;
+}
+int mtl_frame_lock_on(void) { return frame_lock_on(); }
 static int g_link_hz;   // 节拍对象实际被要求的速率（Hz）：帧占几拍由它和定速时钟的比例决定 | The rate the display link object is actually asked for (Hz): the number of ticks a frame occupies follows from it and the pacing clock
 int mtl_link_hz(void) { return g_link_hz; }
 static CAFrameRateRange link_range(int mode) {
@@ -13100,6 +13114,18 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     if (crop) memcpy(it->crop, crop, sizeof it->crop);   // 当帧状态随票号入队，不在出图线程晚读可变window | The current frame's state is enqueued with the ticket number, rather than reading the mutable window late on the present thread
     uint64_t tk = ++g_pq_in;
     pthread_cond_broadcast(&g_pq_cv);
+    // The frame lock (TOTK_PRESENT_MODE=locked, the owner's own patch): the game waits for the display link to take
+    // the frame it just queued, so it draws one frame per refresh. Without it the game runs ahead (about 100 fps on the
+    // Mac) and the display link merges and discards the surplus (the "dropped" count in the log): GPU work that never
+    // reaches the screen. With the lock every frame the game draws is the one on the screen, and the GPU does one frame
+    // of work per refresh. The wait is bounded like the one in mtl_present_wait (STALL_NS), so a display link that stops
+    // calling back cannot hang the game: it goes on as before and the surplus is discarded again.
+    if (frame_lock_on()) {
+        struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_nsec += (long)STALL_NS; if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+        while (g_pq_read < tk && !atomic_load(&g_present_discard)) {
+            if (pthread_cond_timedwait(&g_pq_cv, &g_pq_mu, &ts) == ETIMEDOUT) break;   // the link is silent: do not wait forever
+        }
+    }
     pthread_mutex_unlock(&g_pq_mu);
     return tk;
 }
