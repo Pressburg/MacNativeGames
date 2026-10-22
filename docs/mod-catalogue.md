@@ -120,8 +120,9 @@ In both cases the message names the site and the variable to use instead.
 - The picture with a mod on was not compared against the picture without it: the LOD edit moves the distance at
   which the terrain's detail meshes swap, which is visible only in a wide shot of distant terrain. The run was
   unattended (the window was not in front), so it reached the title screen and nothing beyond it.
-- The fog mods were not run with the game: their manifest was written and checked against the game's own
-  RomFS, but the game was not started with the folder installed.
+- The fog mods **were** run with the game afterwards: Serfrost's Defogger alone runs (8,100+ frames), and
+  together with the lens-flare patch it stops the game at start with SIGSEGV - see the section below. The other
+  fog mods (the private "Better Fog" and the Nexus ones) could not be downloaded.
 
 ## The run that was done
 
