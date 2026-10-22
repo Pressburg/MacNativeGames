@@ -31,7 +31,7 @@ again; the build then rewrote it for Apple silicon as usual.
 | **Disable Targeting DOF** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 1 edit, 4 bytes | - | - |
 | **Increased Camera Speed** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 2 edits, 8 bytes | **yes** (with the camera speed, the DOF removal and the Black Screen Fix) | **yes** - the game ran to frame 8410 |
 | **Island Fix** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 1 edit, 4 bytes | - | - |
-| **Master Sword Cooldown Customizer** | exefs | `pchtxt`, one file per version (5 versions) | 1.1.0 - 1.4.3 | **yes**: 1 edit, 4 bytes (the 1.2.1 file; the other four are left out with a note) | - | - |
+| **Master Sword Cooldown Customizer** | exefs | `pchtxt`, one file per version (5 versions) | 1.1.0 - 1.4.3 | **yes**: 1 edit, 4 bytes (the 1.2.1 file; the other four are left out with a note) | **yes** (the 1.4.3 file) | **yes** - the game runs (7,200 frames) |
 | **No Autobuild Green** (pchtxt form) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 4 edits, 16 bytes | - | - |
 | **No Autobuild Green** (IPS form) | exefs | `IPS32` named after the build id | 1.0.0 - 1.2.1 | **yes**: 4 edits, 16 bytes - the same bytes as the pchtxt form, so both readers agree | - | - |
 | **Increased LOD** | exefs | `pchtxt`, one file per version | 1.4.2, 1.4.3 | **no** for 1.2.1 (the files name 1.4.2 and 1.4.3, so they are left out with a note); **yes for 1.4.3**: 1 edit, 4 bytes | **yes** (1.4.3) | **no: the game stops at start with SIGSEGV** (see below) |
@@ -218,6 +218,10 @@ So the patch that starts the crash is the **lens-flare removal** (`main+0x2a3c7b
 which skips the lens-flare draw), and the palette packs are what make it fatal. The crash is in the game itself,
 not in the port: the faulting instruction reads a string pointer that the game left null, and the game's own
 `signal=` handler prints it.
+
+**The 1.4.3 mod path itself works.** The **Master Sword Cooldown** mod for 1.4.3 (one edit at
+`main+0x2d12fa8`) was merged, built and run: the game plays (7,200 frames, no crash). So the 1.4.3 path is
+sound, and it is that one mod's patch that stops the game.
 
 **The 1.4.3 "Increased LOD" mod stops the game as well.** Built for 1.4.3 and merged (1 edit, 4 bytes at
 `main+0x67f11c`), the game stops at start with SIGSEGV at `main+0x67f1bc`; the same app **without** the mod runs
