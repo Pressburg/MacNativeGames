@@ -12915,10 +12915,10 @@ static CAFrameRateRange link_range(int mode) {
     if (hz > 240) hz = 240;   // 144/240 Hz 的屏按自己的速率走，不再被当成 60 | a 144 / 240 Hz panel is paced at its own rate, not turned into 60
     if (mode == 2) {
         /* Mode 2: the link ticks twice as fast as the frame rate, so the frame the game just drew can go on screen at
-           the next half-period tick (a lower latency) while the frame rate stays the same. The link must not ask for
-           more than the panel can deliver. */
-        int max = mtl_display_max_hz(); if (max <= 0) max = hz;
-        int link = hz * 2; if (link > max) link = max; if (link > 240) link = 240;
+           the next half-period tick (a lower latency) while the frame rate stays the same. The link's rate is not the
+           panel's refresh rate: the panel still shows one picture per refresh, the link simply ticks twice in that
+           time. */
+        int link = hz * 2; if (link > 240) link = 240;
         g_link_hz = link; return CAFrameRateRangeMake(link, link, link);
     }
     g_link_hz = hz;
