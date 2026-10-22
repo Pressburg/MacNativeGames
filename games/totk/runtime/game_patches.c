@@ -516,6 +516,14 @@ static void patch_pchtxt(Module *m) {
     fclose(f);
     if (!matched) runtime_fail("TOTK_PCHTXT has no @nsobid line");
     fprintf(stderr, "[totk] TOTK_PCHTXT %s: %u patches, %u bytes in main (build id %s)\n", path, count, bytes, want);
+    /* The module is already rewritten for Apple silicon here, so a patch that replaces an address-forming instruction
+       (adrp / adr) breaks the pair it belongs to: the game's own address stays in the register and the code reads or
+       writes through it. The build-time merge (scripts/mod_exefs.py) applies the patch to the retail module and lets
+       the rewrite repair what it changes; that is the safe way to try a mod. */
+    fprintf(stderr, "[totk] TOTK_PCHTXT: the patch lands on the rewritten module; a patch that replaces an address-forming\n"
+                    "        instruction (adrp / adr) leaves the game reading or writing through a stale register. Use the\n"
+                    "        build-time merge (build_app.py --mod) for a mod: it patches the retail module and the rewrite\n"
+                    "        repairs what it changes.\n");
 }
 
 /* High frame rates (#61, sky-island trampolines): main+0xce3fec (1.0.0) compares X+0x28 with 100 and, when greater,

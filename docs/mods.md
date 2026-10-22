@@ -197,7 +197,10 @@ What the build does, in order:
      switches this build honours (`@disabled`, `@flag`, see below; the runtime's reader skips both for now). The first line must be
      `@nsobid-<build id>`: the 16 bytes the rewriter's tables use (32 hex digits) or the 20 bytes the
      runtime compares (40 hex digits; the runtime's own `TOTK_PCHTXT` experiment takes only that longer
-     form). Patch lines `<hex main address> <hex bytes>` follow, and only lines after `@enabled` count:
+     form). The runtime's own `TOTK_PCHTXT` experiment applies a pchtxt to the module **as it runs** - the module is
+     already rewritten for Apple silicon then, so a patch that replaces an address-forming instruction (`adrp` / `adr`)
+     leaves the game reading or writing through a stale register. The build-time merge (this section) patches the retail
+     module and lets the rewrite repair what it changes: that is the safe way to try a mod. Patch lines `<hex main address> <hex bytes>` follow, and only lines after `@enabled` count:
      `@disabled` switches the following section off again (a file that keeps an edit around without applying
      it), `@enabled` switches it back on, and `@stop` ends the section - not the file, so a mod may ship several
      sections in one file (theboy181's "Visual Improvements" holds the depth-of-field removal and the lens flare
