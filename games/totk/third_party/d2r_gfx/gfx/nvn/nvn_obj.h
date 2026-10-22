@@ -260,6 +260,7 @@ int mtl_display_hz(void);                                   // 有窗口时屏�
 int mtl_display_max_hz(void);                               // 屏幕本身能跑的最高刷新率（Hz），无窗口 0 | Highest refresh rate the screen itself can run (Hz), 0 without a window
 int nvn_pacing_hz(void);                                    // 当前给帧定速的时钟（Hz）：显示模式下是屏幕的刷新率，游戏模式下是 60 | The clock that paces the frames now (Hz): the display's rate in display mode, 60 in game mode
 int mtl_link_hz(void);                                      // 显示节拍对象实际的速率（Hz） | The rate the display link object actually runs at (Hz)
+int mtl_frame_lock_on(void);                                // 帧锁：游戏每帧等显示节拍取走这一帧 | The frame lock: the game waits for the display link to take each frame
 int nvn_own_clock(void);                                    // 节拍速率不是定速时钟的整数倍，帧只能按自己的时钟走 | The link's rate is not a multiple of the pacing clock's, so the frames pace by their own clock
 void mtl_set_tex_pool_n(int n);                            // 贴图描述符池容量：池外的贴图号按「空槽」处理（读出 0） | Texture descriptor pool capacity: texture IDs outside the pool are treated as 'empty slots' (read 0)
 // 计时埋点（Mac / iOS 共用）：提交按帧号打标；GPU 时间 = 该帧全部命令缓冲 GPUEnd−GPUStart 之和，全部完成后才可读（否则 −1）
