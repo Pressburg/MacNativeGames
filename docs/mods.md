@@ -573,6 +573,9 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   `Pack/Bootup_<语言>.pack` 变大的翻译 mod）。
 - 游戏语言跟随 App 的首选语言，也由它决定 mod 要放在哪个语言目录（`en-US` 对应 `USen`）。只给这个游戏换语言：
   `defaults write org.macnativegames.botw AppleLanguages -array en-US`。
+- **只有数据、没有代码的 mod 现在可以直接构建**：`--mod <mod 文件夹> --install-mod-romfs` 会把它的 RomFS 装进
+  上面那个目录并写好清单。带代码补丁的 mod 仍然会被拒绝：旷野之息 1.6.0 的补丁位置还没有登记在
+  `scripts/patch_sites.py` 里，构建无法核对代码补丁改到的位置。
 
 ### 注意
 

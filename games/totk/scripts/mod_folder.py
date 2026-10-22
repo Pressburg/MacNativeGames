@@ -30,10 +30,10 @@ import subprocess
 import time
 
 
-def mods_folder(version):
+def mods_folder(version, game='TOTK'):
     """<data>/mods/<version>: where the launcher points the game for a player's RomFS mods (runtime/romfs.c,
-    TOTK_ROMFS_MODS)."""
-    return Path.home() / 'Library/Application Support/MacNativeGames' / 'TOTK' / 'mods' / version
+    TOTK_ROMFS_MODS). The game folder is the game's own (Tears of the Kingdom, Breath of the Wild)."""
+    return Path.home() / 'Library/Application Support/MacNativeGames' / game / 'mods' / version
 
 
 class InstallError(RuntimeError):
@@ -108,13 +108,13 @@ def _would_hold(lines):
     return 0
 
 
-def install(mod, version, app, py, tree, *, say=print):
+def install(mod, version, app, py, tree, *, say=print, game='TOTK'):
     """Replace the player's mod folder for `version` with `mod`'s romfs/ and write its manifest against `app`.
 
     Returns Installed, or None when nothing was installed - no romfs/, an empty one, or one whose files the game would
     all load from the app instead - in which case the player's folder is exactly as it was."""
     source = mod/'romfs'
-    folder = mods_folder(version)
+    folder = mods_folder(version, game)
     if not source.is_dir():
         say(f'{mod.name} has no romfs/, so {folder} is left as it is')
         return None

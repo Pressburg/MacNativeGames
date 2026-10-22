@@ -117,7 +117,7 @@ class ModInstall(unittest.TestCase):
         (self.mod/'exefs').mkdir(parents=True)                 # --mod's usual layout
         self.said = []
         self.saved = mod_folder.mods_folder
-        mod_folder.mods_folder = lambda version: self.mods/version     # never touch the real player folder
+        mod_folder.mods_folder = lambda version, game='TOTK': self.mods/version    # never touch the real player folder
 
     def tearDown(self):
         mod_folder.mods_folder = self.saved
@@ -339,3 +339,46 @@ class TheOutputOverlayRecord(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ModCode(unittest.TestCase):
+    """Which files of a mod's exefs/ are code: the merge reads them, and Breath of the Wild's patch sites are not
+    listed, so a mod with code cannot be built for it (a data-only mod can)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.mod = self.root/'A Mod'
+        (self.mod/'exefs').mkdir(parents=True)
+        (self.mod/'romfs').mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_mod_without_an_exefs_folder_has_no_code(self):
+        self.assertEqual(build_app.mod_code_patches(self.mod), [])
+
+    def test_a_mod_with_only_a_main_npdm_has_no_code(self):
+        (self.mod/'exefs'/'main.npdm').write_bytes(b'nx-deadbeef')
+        self.assertEqual(build_app.mod_code_patches(self.mod), [])
+
+    def test_a_patch_file_is_code(self):
+        for name in ('main.pchtxt', 'main.ips', 'main.ips32'):
+            (self.mod/'exefs'/name).write_bytes(b'x')
+            self.assertEqual([p.name for p in build_app.mod_code_patches(self.mod)], [name])
+            (self.mod/'exefs'/name).unlink()
+
+    def test_an_injected_module_is_code(self):
+        (self.mod/'exefs'/'subsdk9').write_bytes(b'x')
+        self.assertEqual([p.name for p in build_app.mod_code_patches(self.mod)], ['subsdk9'])
+
+
+class ModFolderGame(unittest.TestCase):
+    """The player's mod folder is the game's own: .../MacNativeGames/<game>/mods/<version>."""
+
+    def test_the_folder_follows_the_game(self):
+        import mod_folder
+        self.assertEqual(mod_folder.mods_folder('v121').parts[-4:],
+                         ('MacNativeGames', 'TOTK', 'mods', 'v121'))
+        self.assertEqual(mod_folder.mods_folder('botw160', 'BotW').parts[-4:],
+                         ('MacNativeGames', 'BotW', 'mods', 'botw160'))

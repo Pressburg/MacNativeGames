@@ -428,6 +428,17 @@ def fonts_valid(folder):
         return False
 
 
+def mod_code_patches(mod):
+    """The code files a mod's exefs/ holds: everything the merge would look at, except a main.npdm (the native loader
+    never reads a module's metadata)."""
+    exefs = mod/'exefs'
+    if not exefs.is_dir():
+        return []
+    return sorted(p for p in exefs.rglob('*') if p.is_file() and not any(part.startswith('.') for part in
+                                                                             p.relative_to(exefs).parts)
+                   and p.name != 'main.npdm')
+
+
 def merge_mod_exefs(tree, mod, version, logs):
     """Merge a mod's main-module code patches into a copy of the verified retail main (scripts/mod_exefs.py): the
     game's own patch sites are checked first, and the merged module is what the rewrite and the app are built from.
@@ -619,7 +630,7 @@ def overlay_stale(out_dir, heapdef, tree):
     return ''
 
 
-def install_mod_romfs(mod, tree, version, out, py, logs):
+def install_mod_romfs(mod, tree, version, out, py, logs, game='TOTK'):
     """--mod --install-mod-romfs: replace the player's mod folder for this version with the mod's RomFS files, and write
     its manifest against the app just built (games/totk/scripts/mod_folder.py). The replacement is copied and given its
     manifest in a folder next to the player's first, so the player's files are only moved aside for a copy that is
@@ -628,12 +639,12 @@ def install_mod_romfs(mod, tree, version, out, py, logs):
     app replaces itself, the heap table included: mod_heapdef (see above) folded its sizes into the 2K overlay."""
     log = logs / f'mod-manifest-{version}.log'
     try:
-        installed = mod_folder.install(mod, version, out, py, tree, say=say)
+        installed = mod_folder.install(mod, version, out, py, tree, say=say, game=game)
     except mod_folder.InstallError as e:
         log.write_text(e.output + '\n')
         for line in e.output.splitlines()[-3:]:
             say(f'   {line}')
-        raise BuildError(f'the app itself is built, but {mod_folder.mods_folder(version)} was not replaced: {e} '
+        raise BuildError(f'the app itself is built, but {mod_folder.mods_folder(version, game)} was not replaced: {e} '
                          f'(it holds what it held before; fix {mod.name}/romfs, then write the manifest again with '
                          f'scripts/make_mod_manifest.py)') from None
     if installed is None:
@@ -647,18 +658,17 @@ def install_mod_romfs(mod, tree, version, out, py, logs):
     return installed.folder
 
 
-def say_mod_copy_steps(mod, tree, version, out):
+def say_mod_copy_steps(mod, tree, version, out, game='TOTK'):
     """--mod without --install-mod-romfs: the version's mod folder is the player's own, so the build leaves it alone and
     only says how to fill it."""
     if not (mod/'romfs').is_dir():
-        say(f'4/4 app: {mod.name} has no romfs/: its code patches are in the app, and there is no data half to copy')
+        say(f'4/4 app: {mod.name} has no romfs/: there is no data half to copy')
         return
-    folder = mod_folder.mods_folder(version)
+    folder = mod_folder.mods_folder(version, game)
     say(f'4/4 app: {mod.name}/romfs was not installed: {folder} is your folder, and a build only replaces it when you '
         f'pass --install-mod-romfs (which keeps what it held as a backup next to it). To do it by hand:')
     say(f'   rsync -a --exclude=\'.DS_Store\' --exclude=\'manifest.tsv\' "{mod}/romfs/" "{folder}/"')
     say(f'   "{sys.executable}" "{tree}/scripts/make_mod_manifest.py" "{folder}" --app "{out}" --version {version}')
-
 
 def step_data(tree, game, keys, logs, *, firmware=None, shared_fonts=None, mod=None):
     py = tree / '.venv/bin/python'
@@ -1512,9 +1522,12 @@ def main(argv):
             shutil.rmtree(work)
         if args.platform == 'ios':
             raise BuildError('Breath of the Wild has no iPhone / iPad build yet: build the Mac app (leave out --platform ios)')
-        if mod:
+        if mod and mod_code_patches(mod):
             raise BuildError('--mod: merging a mod\'s main-module patches is only wired for Tears of the Kingdom so far '
                              '(the patch sites of Breath of the Wild 1.6.0 are not listed in scripts/patch_sites.py)')
+        if mod:
+            say('--mod: the mod holds no code patches, so only its romfs/ half is used: Breath of the Wild 1.6.0\'s patch '
+                'sites are not listed in scripts/patch_sites.py, so a code patch could not be checked against them')
         if not args.work:
             work = game.parent / 'BotW_build'
             logs = work / 'logs'
@@ -1545,6 +1558,10 @@ def main(argv):
         if r.returncode: raise BuildError(f'the app does not start: {(r.stdout + r.stderr).strip()}')
         say(f'   checked in {time.time() - t1:.0f} s')
         step_warm_metal(tree, out, logs)
+        if mod and args.install_mod_romfs:
+            install_mod_romfs(mod, tree, 'botw160', out, py, logs, game='BotW')   # the game's own mod folder
+        elif mod:
+            say_mod_copy_steps(mod, tree, 'botw160', out, game='BotW')
         say(f'done in {(time.time() - t0) / 60:.0f} min: {out}')
         say('Open it from Finder. The first start verifies the game data and any installed add-on content and keeps a record; '
             'saves, the shader cache and the log go to ~/Library/Application Support/MacNativeGames/BotW and ~/Library/Logs/MacNativeGames/botw.log.')
