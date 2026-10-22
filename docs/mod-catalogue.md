@@ -34,17 +34,30 @@ again; the build then rewrote it for Apple silicon as usual.
 | **Master Sword Cooldown Customizer** | exefs | `pchtxt`, one file per version (5 versions) | 1.1.0 - 1.4.3 | **yes**: 1 edit, 4 bytes (the 1.2.1 file; the other four are left out with a note) | - | - |
 | **No Autobuild Green** (pchtxt form) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 4 edits, 16 bytes | - | - |
 | **No Autobuild Green** (IPS form) | exefs | `IPS32` named after the build id | 1.0.0 - 1.2.1 | **yes**: 4 edits, 16 bytes - the same bytes as the pchtxt form, so both readers agree | - | - |
-| **Increased LOD** | exefs | `pchtxt`, one file per version | 1.4.2, 1.4.3 | **no** for 1.2.1: the files name 1.4.2 and 1.4.3, so they are left out with a note | - | - |
+| **Increased LOD** | exefs | `pchtxt`, one file per version | 1.4.2, 1.4.3 | **no** for 1.2.1 (the files name 1.4.2 and 1.4.3, so they are left out with a note); **yes for 1.4.3**: 1 edit, 4 bytes | - | - |
 | **TOTK-Ultrawide 21:9** | exefs + romfs | `pchtxt` (`main-1.2.1.pchtxt`) + a UI layout archive | 1.0.0 - 1.2.1 | **no**: refused, it lands on the site the app patches itself for `TOTK_ASPECT` (`game_patches.c:583`, `main+0x19b36f0`) - use the app's own aspect ratio instead | - | - |
 | **Dynamic FPS** (NXOptimizer's own DFPS) | exefs | `pchtxt` (1.1.0 only) or an extra `subsdk9` module | 1.1.0 - 1.4.x | **no** for 1.2.1: the `pchtxt` names 1.1.0; the later versions are only the extra module, which the app does not load | - | - |
 | **Max DFPS++** | exefs | an extra `subsdk9` module | 1.x | **no**: an extra code module, not a patch. The app loads main, sdk and subsdk0 only, so its code never runs | - | - |
 | **NXOptimizer / UltraCam** | exefs + romfs | `main.npdm` + an extra `subsdk3` module + a config file | 1.0.0 - 1.4.3 | **no**: an extra code module and a rewritten `main.npdm`, no patch to merge. Its hooks never install here | - | - |
 | **Any Aspect Ratio** (fayaz12g) | exefs | an extra `subsdk9` module | any | **no**: an extra code module, like DFPS | - | - |
-| **The Second Quest** | exefs + romfs | an `IPS32` named after the build id + an extra `subsdk9` module + thousands of data files | 1.1.0 - 1.4.3 | the **IPS** merges (it is named after 1.2.1's build id); the **module does not**, so the mod's code-side features do not work here | - | - |
+| **The Second Quest** | exefs + romfs | an `IPS32` named after the build id + an extra `subsdk9` module + thousands of data files | 1.1.0 - 1.4.3 | the **IPS** merges (1.4.3: 3 edits, 12 bytes; against 1.2.1 it is named after 1.4.3's build id, so it is left out with a note); the **module does not**, so the mod's code-side features do not work here | - | - |
 | **Serfrost's Defogger** (the "FOG" mod) | **romfs only** | two palette packs | any | nothing to merge (no code): `romfs/Pack/EnvPalette.pack.zs` and `CavePalette.pack.zs` | - | - |
 | **Depths of the Kingdom Defogger** (the other "FOG" mod) | **romfs only** | three palette packs | 1.x | nothing to merge (no code). The download is a `.rar`, and no extractor for it is on this machine | - | - |
 | **Better Fog (Not a Reshade)** | romfs | - | 1.0.0 - 1.1.2 | **not testable**: the download is private (HTTP 403) and it does not target 1.2.1 anyway | - | - |
 | **Nexus "Better Fog" / "Reduction of Bloom and Fog"** | romfs | - | - | **not testable**: HTTP 403 behind a Cloudflare check, and the files need an account | - | - |
+
+### The same mods against 1.4.3
+
+The 1.4.3 update's ExeFS was extracted (0.2 s) and the mods that name a 1.4.3 build were merged against the real
+1.4.3 main (build id `277178b7dba1b6d4949a84778d4abc58b31b34f5`, 51 reserved sites):
+
+| Mod | Result |
+|---|---|
+| **Increased LOD** (`1.4.3.pchtxt`) | **merged**: 1 edit, 4 bytes |
+| **Master Sword Cooldown** (`1.4.3.pchtxt`) | **merged**: 1 edit, 4 bytes (the other four files left out with a note) |
+| **The Second Quest** (`277178B7….ips`) | **merged**: 3 edits, 12 bytes; the `subsdk9` is not loaded, so the mod's code-side features do not work here |
+
+No app was built from these (only 1.2.1 was built on this machine), so they are **merged but not run**.
 
 ### The three the owner named
 
@@ -98,9 +111,9 @@ In both cases the message names the site and the variable to use instead.
 
 ## Not verified
 
-- The 1.4.3 rows: the merge was only tried against 1.2.1's main, because that is the version built on this
-  machine. "Increased LOD" (1.4.2 and 1.4.3) and the 1.4.3 files of the other multi-version mods are expected to
-  merge the same way, but that was not run.
+- The 1.4.3 rows were **merged** against the real 1.4.3 main (see above), but no app was built from them: only
+  1.2.1 was built on this machine. The 1.4.2 file of "Increased LOD" was not tried (1.4.2 is not a version this
+  port builds).
 - The rows marked "-" in the "Built" and "Run" columns were merged into main and the result was checked, but the
   app was not rebuilt and the game was not started with them: they all touch one word of the game's code, and
   the one that was built and run (LOD Improvement) proves the path end to end.
