@@ -2736,19 +2736,23 @@ static void present_cfg(const win_t *o) {
     int realtime = !(rt && !strcmp(rt, "0"));
     g_explicit_hz = e != NULL;
     g_hz = g_paced_hz = e ? atoi(e) : (realtime && scr > 0 ? scr : 60);
-    { const char *u = getenv("TOTK_UNCAPPED"), *f60 = getenv("TOTK_FPS60");   // the original 30-frame mode needs fixed pacing; MetalFX interpolation suspends it while on (uncapped_now)
+    const char *u = getenv("TOTK_UNCAPPED"), *f60 = getenv("TOTK_FPS60");
+    {   // the original 30-frame mode needs fixed pacing; MetalFX interpolation suspends it while on (uncapped_now)
       g_uncapped = !e && realtime && !(u && !strcmp(u, "0")) && !(f60 && !strcmp(f60, "0")) && g_hz < UNCAPPED_HZ; }
-    /* TOTK_PRESENT_MODE: the mode decides how the frames are paced. Without it the old behaviour stands: the
-       uncapped clock when it is configured, otherwise the console's rate. */
+    /* TOTK_PRESENT_MODE: how the frames are paced. The default is the console's rate (60 fps): the game is built to
+       run at 60, and part of its UI counts frames rather than seconds, so it behaves exactly as on the console at
+       any refresh rate. TOTK_UNCAPPED=1 asks for the uncapped clock, TOTK_PRESENT_MODE names a mode. */
     const char *pm = getenv("TOTK_PRESENT_MODE");
-    g_present_mode = PRESENT_UNCAPPED;
+    g_present_mode = PRESENT_GAME;
     if (pm && *pm) {
         if (!strcmp(pm, "uncapped")) g_present_mode = PRESENT_UNCAPPED;
         else if (!strcmp(pm, "display")) g_present_mode = PRESENT_DISPLAY;
         else if (!strcmp(pm, "game")) g_present_mode = PRESENT_GAME;
         else if (!strcmp(pm, "locked")) g_present_mode = PRESENT_LOCKED;
-        else LOG("[nvn] 【错误】TOTK_PRESENT_MODE=%s 不是已知的模式（uncapped / display / game / locked），按默认的 uncapped 继续", pm);
-    } else if (!g_uncapped) g_present_mode = PRESENT_GAME;
+        else LOG("[nvn] 【错误】TOTK_PRESENT_MODE=%s 不是已知的模式（uncapped / display / game / locked），按默认的 game 继续", pm);
+    } else if (u && strcmp(u, "0")) {
+        g_present_mode = PRESENT_UNCAPPED;    // the uncapped clock, asked for by name
+    }
     if (g_present_mode == PRESENT_UNCAPPED) {
         g_uncapped = 1;
         g_hz = uncapped_cap(scr);
@@ -2762,7 +2766,7 @@ static void present_cfg(const win_t *o) {
         g_pacing_hz = (g_present_mode == PRESENT_DISPLAY || g_present_mode == PRESENT_LOCKED)
                           ? (g_paced_hz > PRESENT_MAX_HZ ? PRESENT_MAX_HZ : g_paced_hz)
                           : (g_explicit_hz ? g_hz : 60);
-        LOG("[nvn] 出图节拍 %d Hz，模式 %s（%s）", g_hz,
+        LOG("[nvn] 出图节拍 %d Hz（屏幕 %d Hz），模式 %s（%s）", g_pacing_hz, scr,
             g_present_mode == PRESENT_DISPLAY ? "display（每个刷新出一帧）"
                 : g_present_mode == PRESENT_LOCKED ? "locked（一帧一次上屏，显卡每刷新只做一帧）"
                 : "game（主机帧率，一帧占多个刷新）",
@@ -2783,8 +2787,8 @@ static void present_cfg(const win_t *o) {
        present interval it chose for every frame, so presenting on every display tick (D2R's display mode) made menus
        and light scenes run up to twice as fast. DM_PRESENT_INTERVAL=display keeps the old behaviour for comparison. */
     const char *m = getenv("DM_PRESENT_INTERVAL"); g_display_mode = m && !strcmp(m, "display");
-    LOG("[nvn] 出图节拍 %d Hz，间隔模式 %s（游戏设的出图间隔 %d；%s）", g_hz, g_display_mode ? "display（每节拍一帧，剪口）" : "game（原版语义）", o->interval,
-        e ? "显式指定" : g_uncapped ? "不限帧率" : realtime && scr > 0 ? "跟随显示器" : "固定 60 Hz");
+    LOG("[nvn] 出图节拍 %d Hz，间隔模式 %s（游戏设的出图间隔 %d；%s）", g_pacing_hz, g_display_mode ? "display（每节拍一帧，剪口）" : "game（原版语义）", o->interval,
+        e ? "显式指定" : g_uncapped ? "不限帧率" : "主机帧率 60");
 }
 static unsigned present_ticks(const win_t *o) {   /* pacing-clock ticks per game frame */
     present_cfg(o);
