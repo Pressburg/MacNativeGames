@@ -196,3 +196,28 @@ ERROR: the app itself is built, but .../TOTK/mods/v121 was not replaced: nothing
 `FAIL: native display link initialization` - `CVDisplayLinkCreateWithActiveCGDisplays` needs an active
 display. `caffeinate -u -t 30` wakes it for the run; the supervisor's `caffeinate -dimsu` keeps the machine
 awake but does not wake a display that has already gone to sleep.
+
+## Two mods together: the fog mod and the lens-flare patch stop the game
+
+The fog mods are data (they replace the environment and cave palette packs), so they are loaded while the game
+runs; the lens-flare patch is code (one instruction in main). **Each on its own is fine - together they stop the
+game at start with SIGSEGV.** That was measured, one app per case, each run with the same mod folder:
+
+| App (the code patch it carries) | the palette packs installed | what happened |
+|---|---|---|
+| none | yes | the game runs (8,100+ frames) |
+| the TOTK Optimizer's four patches | yes | **SIGSEGV at start** (`main+0x9d1b70`, a string hash over a null pointer) |
+| the TOTK Optimizer's four patches | no | the game runs (23,400 frames) |
+| **Remove Lens Flare** (`main+0x2a3c7b0`) | yes | **SIGSEGV at start** |
+| Remove Lens Flare | no | the game runs (1,800 frames) |
+| Remove Targeting DOF (`main+0xc5b128`) | yes | the game runs (8,100+ frames) |
+| Increased Camera Speed (`main+0x3811 2c`, `main+0xd180f8`) | yes | the game runs (8,100+ frames) |
+
+So the patch that starts the crash is the **lens-flare removal** (`main+0x2a3c7b0` becomes `cbnz x0, #0x20`,
+which skips the lens-flare draw), and the palette packs are what make it fatal. The crash is in the game itself,
+not in the port: the faulting instruction reads a string pointer that the game left null, and the game's own
+`signal=` handler prints it.
+
+**What a player should do:** use one of the two. The palette mod alone is fine (it is what the fog mods are
+for), and the lens-flare patch alone is fine. The palette packs of Serfrost's Defogger are from game version
+1.0.0, so a 1.2.1 game is reading a table of a different size - that is the likely reason the two interact.
