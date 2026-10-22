@@ -222,3 +222,10 @@ not in the port: the faulting instruction reads a string pointer that the game l
 **What a player should do:** use one of the two. The palette mod alone is fine (it is what the fog mods are
 for), and the lens-flare patch alone is fine. The palette packs of Serfrost's Defogger are from game version
 1.0.0, so a 1.2.1 game is reading a table of a different size - that is the likely reason the two interact.
+
+**What the lens-flare patch does here:** nothing. Its edit replaces an `adrp` (main+0x2a3c7b0, the address of a
+table the game writes through) with `sub x5, x13, x6`. Merged at build time, the rewrite sees that the instruction it
+expected there is gone, moves the code and leaves a **nop** where the patch was - so the mod is silently dropped and
+the game runs. Applied at run time (the runtime's own `TOTK_PCHTXT`), the patch lands raw, the address register keeps
+an old value and the game writes through it: it stops at start with SIGSEGV at main+0x9d1b70, the same place as
+above. The rewrite is what makes the build-time path survivable - and what makes the mod useless.
