@@ -2715,7 +2715,7 @@ static int pacing_hz(void) {
     if (uncapped_now()) return g_hz;                                       // our own clock (the uncapped ceiling)
     if (m == MFX_HALF || m == MFX_30 || game_holds_30()) return g_paced_hz; // the display's rate
     if (g_display_mode) return g_paced_hz;                                 // DM_PRESENT_INTERVAL=display: one frame per refresh
-    if (g_present_mode == PRESENT_DISPLAY) return g_paced_hz;             // the display's rate
+    if (g_present_mode == PRESENT_DISPLAY || g_present_mode == PRESENT_LOCKED) return g_paced_hz;   // the display's rate
     return g_explicit_hz ? g_hz : 60;                                     // the console's rate (60 fps)
 }
 /* The display link's rate (Hz) against the pacing clock: when the link's rate is not a multiple of the pacing
