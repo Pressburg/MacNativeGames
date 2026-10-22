@@ -257,7 +257,6 @@ void mtl_present_wait(uint64_t ticket);                    // 等该票号的出
 void mtl_present_flush(void);                              // 等已入队的出图全部处理完 | Wait until all enqueued presents have been processed
 void mtl_present_test_stall(uint64_t ns);                  // 单测：出图线程每次出图前额外停顿 ns | Unit test: extra pause in ns before each present on the present thread
 int mtl_display_hz(void);                                   // 有窗口时屏幕当前刷新率（Hz），无窗口 0 | Current refresh rate of the screen (Hz) when there is a window, 0 without a window
-int mtl_display_max_hz(void);                               // 屏幕本身能跑的最高刷新率（Hz），无窗口 0 | Highest refresh rate the screen itself can run (Hz), 0 without a window
 int nvn_pacing_hz(void);                                    // 当前给帧定速的时钟（Hz）：显示模式下是屏幕的刷新率，游戏模式下是 60 | The clock that paces the frames now (Hz): the display's rate in display mode, 60 in game mode
 int mtl_link_hz(void);                                      // 显示节拍对象实际的速率（Hz） | The rate the display link object actually runs at (Hz)
 int mtl_frame_lock_on(void);                                // 帧锁：游戏每帧等显示节拍取走这一帧 | The frame lock: the game waits for the display link to take each frame

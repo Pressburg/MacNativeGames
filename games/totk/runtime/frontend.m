@@ -43,10 +43,6 @@ int front_display_hz(void){
  }
  return (int)screen.maximumFramesPerSecond;
 }
-int front_display_max_hz(void){
- if(!window)return 0;
- NSScreen *screen=window.screen; return screen?(int)screen.maximumFramesPerSecond:0;
-}
 void front_frame_presented(void){
  if(atomic_fetch_add_explicit(&presentedFrames,1,memory_order_relaxed)==0){
   fprintf(stderr,"[totk-boot] %.3f first presented frame\n",(runtime_now_ns()-bootStartNS)/1e9);
