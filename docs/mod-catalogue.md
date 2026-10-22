@@ -29,7 +29,7 @@ again; the build then rewrote it for Apple silicon as usual.
 | **Disable Internal FXAA ExeFS** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 1 edit, 4 bytes | - | - |
 | **Disable Quality Reduction** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 1 edit, 4 bytes | - | - |
 | **Disable Targeting DOF** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 1 edit, 4 bytes | - | - |
-| **Increased Camera Speed** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 2 edits, 8 bytes | - | - |
+| **Increased Camera Speed** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 2 edits, 8 bytes | **yes** (with the camera speed, the DOF removal and the Black Screen Fix) | **yes** - the game ran to frame 8410 |
 | **Island Fix** (NXOptimizer's own) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 1 edit, 4 bytes | - | - |
 | **Master Sword Cooldown Customizer** | exefs | `pchtxt`, one file per version (5 versions) | 1.1.0 - 1.4.3 | **yes**: 1 edit, 4 bytes (the 1.2.1 file; the other four are left out with a note) | - | - |
 | **No Autobuild Green** (pchtxt form) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 4 edits, 16 bytes | - | - |
@@ -129,3 +129,57 @@ The game then ran with that app and wrote two screenshots: the first shows "Nint
 (`间隔 p50 50.00 / p95 183.33 / 最大 1733.33 ms`) - the window was in the background during the test, so the
 game was throttled and the numbers say nothing about the frame rate.
 
+
+## A second build: both halves of a mod, installed by the build
+
+The run above used a mod with a code patch only. This one used a mod with **both** halves - the code patch of the
+TOTK Optimizer's own set (Remove Quality Reduction, Remove Targeting DOF, Remove Lensflare, **Improve LOD**,
+four one-word edits) and the data half of two real mods (UltraCam's settings file and DynamicFPS's two
+resolution files) - and it was built with `--install-mod-romfs`, so the build itself replaced the player's mod
+folder:
+
+```
+$ python3.14 build_app.py "<base>.nsp" -k ~/Documents/Nintendo/Keys-22.1.0/prod.keys \
+    --update "<1.2.1 update>.nsp" --firmware ~/Documents/Nintendo/Firmware \
+    --work ~/Documents/Nintendo/TOTK_build_mod \
+    --mod ~/Documents/Nintendo/Mods/mods/optimizer-1.2.1-full --install-mod-romfs \
+    -o ~/Documents/Nintendo/builds/"Tears of the Kingdom (mod2).app"
+[01:33:57] 1/4 code: merging optimizer-1.2.1-full's main-module patch (4 edits, 16 bytes of main) before the rewrite
+[01:48:05] /Users/admin/Library/Application Support/MacNativeGames/TOTK/mods/v121: replaced by
+            optimizer-1.2.1-full/romfs and its manifest.tsv (--install-mod-romfs); what it held before is kept in
+            .../mods/v121.backup-20261022-014804
+[01:48:05]    3 files the RomFS lacks are added, for example UltraCam/maxlastbreath.ini
+[01:48:05]    .../mods/v121/manifest.tsv: 3 files (0 replaced, 3 added)
+[01:48:05] done in 15 min: /Users/admin/Documents/Nintendo/builds/Tears of the Kingdom (mod2).app
+```
+
+The game then ran with that app. Its log says that the player's mod folder was read at start and that the three
+files went into the RomFS:
+
+```
+[totk] RomFS overlay: UltraCam/maxlastbreath.ini (1462 bytes) is added
+[totk] RomFS overlay: dfps/45fps.ini (134 bytes) is added
+[totk] RomFS overlay: dfps/resolution_1080p.ini (269 bytes) is added
+[totk] RomFS overlay: /Users/admin/Library/Application Support/MacNativeGames/TOTK/mods/v121 checked, 3 files, 0.0 MB hashed in 0.00 s
+[totk] ENTER nnMain
+[totk-gfx] [nvn] 游戏帧工作时间（+0x118）至帧 1200：p50 9.08 / p90 10.77 / 最大 15.45 ms（300 帧，超 33.3 ms 累计 0 帧）
+```
+
+So both halves of a mod are proven end to end by a build: the code patches are in the module the app runs (the
+game starts and the frames are regular), and the data files are in the player's mod folder and loaded at start.
+
+The data half of the **Black Screen Fix** was refused by the same build, and that refusal is right: its UI
+archive is from an older game version and changes `anim/ShortCutBG_00_In.bflan`, the member the build patches
+for the quick menu, so the two cannot be merged:
+
+```
+ERROR: the app itself is built, but .../TOTK/mods/v121 was not replaced: nothing written:
+       UI/LayoutArchive/Common.Product.110.Nin_NX_NVN.blarc.zs: the mod changes anim/ShortCutBG_00_In.bflan,
+       which the build patches too, so the two can't be merged
+```
+
+**Note for the next run:** the display of an unattended Mac sleeps after two minutes
+(`pmset -g custom` says `displaysleep 2`), and the game then stops at start with
+`FAIL: native display link initialization` - `CVDisplayLinkCreateWithActiveCGDisplays` needs an active
+display. `caffeinate -u -t 30` wakes it for the run; the supervisor's `caffeinate -dimsu` keeps the machine
+awake but does not wake a display that has already gone to sleep.
