@@ -12300,13 +12300,6 @@ int mtl_display_hz(void) {
     return s ? [[s valueForKey:@"maximumFramesPerSecond"] intValue] : 0;
 #endif
 }
-// 屏幕本身能跑的最高刷新率（Hz）：ProMotion 屏的面板最高 120，当前模式可能是 60。
-// The highest refresh rate the screen itself can run (Hz): a ProMotion panel's top rate is 120 while its current mode may be 60.
-int mtl_display_max_hz(void) {
-    if (!front_metal_layer()) return 0;
-    int hz = front_display_max_hz();
-    return hz > 0 ? hz : mtl_display_hz();
-}
 static _Atomic uint64_t g_present_stall_ns;   // 单测用：出图线程每次出图前额外停顿（模拟 drawable 迟迟不可用） | For unit tests: an extra pause before each present on the present thread (simulating a drawable that stays unavailable)
 static CAMetalLayer *g_present_layer_resident;
 void mtl_present_test_stall(uint64_t ns) { g_present_stall_ns = ns; }

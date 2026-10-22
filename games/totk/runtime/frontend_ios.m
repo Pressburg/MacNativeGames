@@ -23,7 +23,6 @@ void *front_metal_layer(void){return (__bridge void *)metalLayer;}
 /* The screen's refresh rate (Hz): the iPhone and the iPad report their panel's rate, and the phone's own screen is
    the one the game is on. */
 int front_display_hz(void){return (int)[UIScreen mainScreen].maximumFramesPerSecond;}
-int front_display_max_hz(void){return (int)[UIScreen mainScreen].maximumFramesPerSecond;}
 void front_frame_presented(void){
  if(atomic_fetch_add_explicit(&presentedFrames,1,memory_order_relaxed)==0){
   fprintf(stderr,"[totk-boot] %.3f first presented frame\n",(runtime_now_ns()-bootStartNS)/1e9);
