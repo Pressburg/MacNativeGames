@@ -34,7 +34,7 @@ again; the build then rewrote it for Apple silicon as usual.
 | **Master Sword Cooldown Customizer** | exefs | `pchtxt`, one file per version (5 versions) | 1.1.0 - 1.4.3 | **yes**: 1 edit, 4 bytes (the 1.2.1 file; the other four are left out with a note) | - | - |
 | **No Autobuild Green** (pchtxt form) | exefs | `pchtxt`, one file per version | 1.0.0 - 1.2.1 | **yes**: 4 edits, 16 bytes | - | - |
 | **No Autobuild Green** (IPS form) | exefs | `IPS32` named after the build id | 1.0.0 - 1.2.1 | **yes**: 4 edits, 16 bytes - the same bytes as the pchtxt form, so both readers agree | - | - |
-| **Increased LOD** | exefs | `pchtxt`, one file per version | 1.4.2, 1.4.3 | **no** for 1.2.1 (the files name 1.4.2 and 1.4.3, so they are left out with a note); **yes for 1.4.3**: 1 edit, 4 bytes | - | - |
+| **Increased LOD** | exefs | `pchtxt`, one file per version | 1.4.2, 1.4.3 | **no** for 1.2.1 (the files name 1.4.2 and 1.4.3, so they are left out with a note); **yes for 1.4.3**: 1 edit, 4 bytes | **yes** (1.4.3) | **no: the game stops at start with SIGSEGV** (see below) |
 | **TOTK-Ultrawide 21:9** | exefs + romfs | `pchtxt` (`main-1.2.1.pchtxt`) + a UI layout archive | 1.0.0 - 1.2.1 | **no**: refused, it lands on the site the app patches itself for `TOTK_ASPECT` (`game_patches.c:583`, `main+0x19b36f0`) - use the app's own aspect ratio instead | - | - |
 | **Dynamic FPS** (NXOptimizer's own DFPS) | exefs | `pchtxt` (1.1.0 only) or an extra `subsdk9` module | 1.1.0 - 1.4.x | **no** for 1.2.1: the `pchtxt` names 1.1.0; the later versions are only the extra module, which the app does not load | - | - |
 | **Max DFPS++** | exefs | an extra `subsdk9` module | 1.x | **no**: an extra code module, not a patch. The app loads main, sdk and subsdk0 only, so its code never runs | - | - |
@@ -218,6 +218,13 @@ So the patch that starts the crash is the **lens-flare removal** (`main+0x2a3c7b
 which skips the lens-flare draw), and the palette packs are what make it fatal. The crash is in the game itself,
 not in the port: the faulting instruction reads a string pointer that the game left null, and the game's own
 `signal=` handler prints it.
+
+**The 1.4.3 "Increased LOD" mod stops the game as well.** Built for 1.4.3 and merged (1 edit, 4 bytes at
+`main+0x67f11c`), the game stops at start with SIGSEGV at `main+0x67f1bc`; the same app **without** the mod runs
+(10,200 frames). The patch replaces a conditional branch with an unconditional one that skips 0x90 bytes, and in
+the 1.4.3 code that range holds the block that computes an address (`adrp x9` / `ldr` / `csel`, main+0x67f124):
+the game then reads through a register that was never set, and the load faults on a small address
+(`fault=0xd2a`). The patch was made for a layout where the skipped range held only the branch it wanted to skip.
 
 **What a player should do:** use one of the two. The palette mod alone is fine (it is what the fog mods are
 for), and the lens-flare patch alone is fine. The palette packs of Serfrost's Defogger are from game version
