@@ -55,10 +55,11 @@ sys.path.insert(0, str(GAME/'scripts'))
 import mod_folder                  # noqa: E402  the player's RomFS mod folder: replaced only when --install-mod-romfs is given
 EXPECTED = json.loads((GAME / 'assets/expected-v1.0.0.json').read_text())
 UPDATED = json.loads((GAME / 'assets/expected-v1.1.2.json').read_text())
+UPDATED111 = json.loads((GAME / 'assets/expected-v1.1.1.json').read_text())
 UPDATED121 = json.loads((GAME / 'assets/expected-v1.2.1.json').read_text())
 UPDATED143 = json.loads((GAME / 'assets/expected-v1.4.3.json').read_text())
-VERSIONS = {'v0': EXPECTED, 'v112': UPDATED, 'v121': UPDATED121, 'v143': UPDATED143}
-UPDATES = ('v112', 'v121', 'v143')
+VERSIONS = {'v0': EXPECTED, 'v112': UPDATED, 'v111': UPDATED111, 'v121': UPDATED121, 'v143': UPDATED143}
+UPDATES = ('v112', 'v111', 'v121', 'v143')
 # Breath of the Wild (games/botw; botw.md in the Tears of the Kingdom project): 1.6.0 as one card image with the base game, the
 # update and the add-on content; 1.9.0 as a base NSP plus the 1.9.0 update NSP. The game is chosen by the title IDs of the NCAs
 # in the game file, never by its name.

@@ -30,11 +30,11 @@ ROOT = Path(__file__).resolve().parents[1]          # games/totk
 RUNTIME = ROOT / 'runtime'
 REWRITER = ROOT / 'third_party/d2r/patch_nso.py'
 
-VERSIONS = ('v0', 'v112', 'v121', 'v143')
+VERSIONS = ('v0', 'v112', 'v111', 'v121', 'v143')
 # The #if guard that selects a version's block in game_version.h / game_patches.c; 1.0.0 is the #else block.
-GUARDS = {'v112': 'TOTK_GAME_V112', 'v121': 'TOTK_GAME_V121', 'v143': 'TOTK_GAME_V143'}
-# The version-specific patch source (game_patches.c is shared by 1.0.0, 1.1.2 and 1.2.1).
-PATCHER = {'v0': 'game_patches.c', 'v112': 'game_patches.c', 'v121': 'game_patches.c', 'v143': 'game_patches_v143.c'}
+GUARDS = {'v112': 'TOTK_GAME_V112', 'v121': 'TOTK_GAME_V121', 'v143': 'TOTK_GAME_V143', 'v111': 'TOTK_GAME_V111'}
+# The version-specific patch source (game_patches.c is shared by 1.0.0, 1.1.2, 1.1.1 and 1.2.1).
+PATCHER = {'v0': 'game_patches.c', 'v112': 'game_patches.c', 'v111': 'game_patches.c', 'v121': 'game_patches.c', 'v143': 'game_patches_v143.c'}
 
 Site = namedtuple('Site', 'label offset size')
 MAX_IMAGE = 0x8000000     # 128 MiB: above every main image, below every instruction word a table mentions

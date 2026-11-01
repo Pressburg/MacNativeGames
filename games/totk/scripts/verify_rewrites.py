@@ -32,7 +32,7 @@ def gate(command, output, environment):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', choices=('v0','v112','v121','v143','botw160','botw190'), default='v0')
+    parser.add_argument('--version', choices=('v0','v112','v111','v121','v143','botw160','botw190'), default='v0')
     parser.add_argument('--collect-existing', action='store_true')
     parser.add_argument('--jobs', type=int, default=2)
     args = parser.parse_args()
@@ -68,7 +68,7 @@ def main():
                   '--jobs', str(args.jobs), '--min-eff', '2', '--max-extra', '16',
                   '--mutate', '300' if module == 'main' else '150',
                   '--tsv', str(analysis / f'{module}-equivalence-v3.tsv')], equivalence, environment)
-        structural = re.search(rf'^STRUCT {module} OK 改写点=(\d+)', structure.read_text(), re.M)
+        structural = re.search(rf'^STRUCT {module} OK .*改写点=(\d+)', structure.read_text(), re.M)
         semantic = re.search(rf'^EQUIV {module} OK 站点=(\d+) 试验=(\d+) 有效试验=(\d+) 双异常=(\d+).*变异=(\d+).*抓到=(\d+) 漏抓=0', equivalence.read_text(), re.M)
         if not structural or not semantic:
             raise RuntimeError(f'Missing successful structure/equivalence gate for {module}')
