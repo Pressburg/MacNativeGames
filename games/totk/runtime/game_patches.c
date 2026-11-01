@@ -1,7 +1,6 @@
 #include "game_patches.h"
 #include "aspect_patch.h"
 #include "game_version.h"
-#include "pchtxt.h"
 #include "world_survey.h"
 #include <TargetConditionals.h>
 #include <stdio.h>
@@ -9,7 +8,6 @@
 #include <string.h>
 #include <strings.h>
 #include <stdatomic.h>
-#include <unistd.h>
 #include <math.h>
 
 /* 60 FPS.
@@ -135,6 +133,18 @@ typedef struct { uint64_t fmul, store; unsigned r, f; int off; int pair; } Cloth
 static const ClothInline cloth_inline[3] = {{0x82192c, 0x821928, 0, 8, 0x124, 0}, {0x822a64, 0x822a40, 0, 8, 0x124, 0},
                                             {0x83182c, 0x831830, 1, 0, 0x134, 0}};
 static const uint64_t cloth_call = 0x8222f0, cloth_update = 0x89822c;
+#elif defined(TOTK_GAME_V112)
+static const ClothInline cloth_inline[3] = {{0x9d1e64, 0x9d1e74, 0, 8, 0x104, 0}, {0x9d2d34, 0x9d2d2c, 0, 8, 0x104, 0},
+                                            {0x9e7648, 0x9e764c, 1, 0, 0x134, 0}};
+static const uint64_t cloth_call = 0x9d2774, cloth_update = 0x88a998;
+#elif defined(TOTK_GAME_V111)
+/* 1.1.1: the same three inline places and the one call as 1.2.1, in 1.1.1's own main (mapped with
+   map_version_sites.py --from v121 --to v111, then read out of the instruction words: the shape is the 1/30 constant
+   load, the str of the factor, the fmul). The two str sites here hold the factor at sp+0x144 (1.2.1 used +0x104), so
+   the offset is not 1.2.1's. */
+static const ClothInline cloth_inline[3] = {{0xa53780, 0xa5377c, 0, 8, 0x144, 0}, {0xa546bc, 0xa54698, 0, 8, 0x144, 0},
+                                            {0xa68f10, 0xa68f14, 1, 0, 0x134, 0}};
+static const uint64_t cloth_call = 0xa54174, cloth_update = 0x7d92d4;
 #else
 static const ClothInline cloth_inline[3] = {{0x7b5988, 0x7b598c, 0, 8, -0x40, 1}, {0x7b6b28, 0x7b6b2c, 0, 8, -0x40, 1},
                                             {0x7f5ec4, 0x7f5ed0, 1, 0, 0x114, 0}};
@@ -255,66 +265,22 @@ static void patch_realtime(Module *m) {
    and the store of s1 at main+0xc630d8 stays. The size read from the parameter is then not used. The host writes the
    page at load, so on the phone (code patched at build) the size is still chosen at run time: TOTK_RENDER_RES, or the
    game's handheld 1280x720 when unset / 0 (the phone always reports handheld mode). The game's final passes scale the
-   scene to its output (1280x720 handheld). On the Mac the size is absolute (the game's own entry is a fixed 1600x900,
-   there is no canvas factor like 1.4.3's), and unset TOTK_RENDER_RES keeps the scene at the canvas size, written again
-   whenever the settings panel changes the canvas (output_size_set). */
+   scene to its output (1280x720 handheld). */
 static const GamePatch render_res_sites[3] = {
     {GAME_ADDR(0xc630bc), 0x5e21d900, 0, "scvtf s0, s8 -> adrp x9, <data page>"},
     {GAME_ADDR(0xc630c4), 0xbd0cc660, 0x2d420520, "str s0, [x19, #0xcc4] -> ldp s0, s1, [x9, #16]"},
     {GAME_ADDR(0xc630c8), 0x5e21d921, 0xbd0cc660, "scvtf s1, s9 -> str s0, [x19, #0xcc4]"},
 };
-static int render_canvas;   /* auto: the scene follows the canvas (Mac) */
-/* The HeapDef overlay for this canvas (and scene, scene: "<canvas>-scene-<canvas>") that runtime/romfs.c mounts. */
-__attribute__((unused)) static int overlay_present(unsigned w, unsigned h, int scene) {
-    const char *dir = getenv("TOTK_ROMFS_PATCHES_OUT"); char path[4096];
-    if (scene) snprintf(path, sizeof path, "%s/%ux%u-scene-%ux%u/manifest.tsv", dir ? dir : "extracted/" TOTK_GAME_DIR "/romfs-patches-out", w, h, w, h);
-    else snprintf(path, sizeof path, "%s/%ux%u/manifest.tsv", dir ? dir : "extracted/" TOTK_GAME_DIR "/romfs-patches-out", w, h);
-    return access(path, R_OK) == 0;
-}
-/* The scene follows the canvas (after PR #1467) only where it was made for: 1.2.1 on the Mac, TOTK_RENDER_RES unset,
-   and an app that carries the scene overlays (build_app.py makes them for 1.2.1 and 1.4.3). 1.0.0 shares this
-   file but gets none, and an app from before (only update_runtime.py since) has none: both keep the game's own 1600x900
-   scene and the plain overlays, as before, instead of stopping at a missing overlay (runtime/romfs.c). */
-static int scene_follows_canvas(void) {
-#if TARGET_OS_OSX && defined(TOTK_GAME_V121)
-    static int decided, on;
-    if (!decided) {
-        const char *e = getenv("TOTK_RENDER_RES");
-        on = !getenv("TOTK_EXPORT_IOS") && (!e || !*e) && overlay_present(1920, 1080, 1);
-        if (!on && !getenv("TOTK_EXPORT_IOS") && (!e || !*e))
-            fprintf(stderr, "[totk] scene at the game's own 1600x900: this app has no scene overlays (build it again with build_app.py for the scene at the canvas size)\n");
-        decided = 1;
-    }
-    return on;
-#else
-    return 0;
-#endif
-}
-static uint8_t *render_page;   /* the data page, so the scene size can follow the canvas (output_size_set) */
-static int output_full_at_start = 1;   /* TOTK_OUTPUT_RES explicit: the game starts at the full canvas, else at 1080p */
 static int render_res(unsigned *w, unsigned *h) {
     const char *e = getenv("TOTK_RENDER_RES");
-    if (e && !strcmp(e, "0")) return 0;
-    if (!e || !*e) {
-        if (!scene_follows_canvas()) return 0;
-        render_canvas = 1;
-        unsigned ow = 1920, oh = 1080;   /* the largest canvas: the scene it must hold, for the heaps */
-        runtime_output_res(&ow, &oh);
-        *w = ow; *h = oh;
-        return 1;
-    }
+    if (!e || !*e || !strcmp(e, "0")) return 0;
     if (sscanf(e, "%ux%u", w, h) != 2 || *w < 64 || *h < 64 || *w > 4096 || *h > 4096) runtime_fail("TOTK_RENDER_RES must be <width>x<height>");
     return 1;
 }
 static void patch_render_res(Module *m) {
     uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
     unsigned w = 1280, h = 720; int set = render_res(&w, &h);
-    if (!CODE_PATCHED_AT_BUILD && !set) return;   /* the game's own size unless asked */
-    if (render_canvas) {   /* the scene starts at the canvas the game starts at (1080p unless TOTK_OUTPUT_RES starts full) */
-        unsigned ow = 1920, oh = 1080;
-        if (runtime_output_res(&ow, &oh) && output_full_at_start) { w = ow; h = oh; }
-        else { w = 1920; h = 1080; }
-    }
+    if (!CODE_PATCHED_AT_BUILD && !set) return;   /* Mac: the game's own size unless asked */
     uint32_t want[3] = {adrp_x9((uintptr_t)m->base + render_res_sites[0].offset, (uintptr_t)m->base + data_off),
                         render_res_sites[1].replacement, render_res_sites[2].replacement};
     if (CODE_PATCHED_AT_BUILD) {
@@ -334,9 +300,8 @@ static void patch_render_res(Module *m) {
     }
     float v[2] = {(float)w, (float)h};
     memcpy(m->base + data_off + 16, v, sizeof v);
-    render_page = m->base + data_off;   /* output_size_set keeps the scene at the canvas when the panel switches */
-    fprintf(stderr, "[totk] render resolution patch: scene render size %ux%u (3 instructions at main+0xc630bc, value on the data page)%s\n",
-            w, h, render_canvas ? ", follows the canvas" : "");
+    fprintf(stderr, "[totk] render resolution patch: scene render size %ux%u%s (3 instructions at main+0xc630bc, value on the data page)\n",
+            w, h, set ? "" : " (the game's handheld size; TOTK_RENDER_RES not set)");
 }
 
 /* Output resolution ("true 2K", 2026-10-17; key 3 switches it while playing). Two sizes are 1920x1080 in the game:
@@ -361,31 +326,31 @@ static void patch_render_res(Module *m) {
    that bit and posts the "operation mode changed" notification (oe message 30; the mode itself stays docked) so that the
    handler runs; the game lays out its crop, canvas and UI again at the new size. At 1920x1080 the picture fills the
    swapchain's top-left (the crop says so) and the present scales it to the window (MetalFX when the window is bigger: the
-   2K output). The scene follows the canvas (patch_render_res: a 1080p canvas renders a 1080p scene, 2K a 2K scene, 4K a
-   4K scene; TOTK_RENDER_RES=0 keeps the game's own 1600x900); its final upscale (MetalFX on the Mac, shader a3a570eb)
-   writes the canvas.
-   TOTK_OUTPUT_RES: auto (the Mac default) = the largest swapchain whose heap overlay the app carries (2K, or 4K when the app carries the
-   4K heap overlay) and heaps so that the settings panel can switch at any time, starting at
+   2K output). The scene keeps its render size either way; its final upscale (MetalFX on the Mac, shader a3a570eb) writes
+   the canvas.
+   TOTK_OUTPUT_RES: auto (the Mac default) = a 2560x1440 swapchain and heaps so that the settings panel can switch at any time, starting at
    1920x1080 (the user's choice, 2026-10-17: "default 1080p"; needs the HeapDef overlay built by make romfs-patches; without
    it the game's own 1920x1080, no switching); <w>x<h> = that largest size, starting there (TOTK_OUTPUT_RES=2560x1440 starts
    in true 2K); 0 = the game's own 1920x1080, no switching. iOS and the iOS export (TOTK_EXPORT_IOS) keep the game's own size. Decided once;
    every caller sees the same answer. Mac only. */
+static int output_full_at_start = 1;
 static int output_res_auto(unsigned *w, unsigned *h) {
 #if TARGET_OS_OSX
     if (getenv("TOTK_EXPORT_IOS")) return 0;
-    /* The largest canvas whose heap overlay the app carries, as <canvas>-scene-<canvas>: the scene follows the canvas
-       (patch_render_res), and that overlay is what runtime/romfs.c mounts for it. The plain <canvas> overlays stay for
-       TOTK_RENDER_RES=0. */
-    /* with the scene at the canvas (scene_follows_canvas) the canvas's <canvas>-scene-<canvas> overlay, else its plain one */
-    int scene = scene_follows_canvas();
-    static const unsigned sizes[][2] = {{3840, 2160}, {2560, 1440}};
+    /* The largest canvas whose heap overlay the app carries: 2K. Native 4K is 1.4.3's (game_patches_v143.c), where the
+       scene follows the canvas. */
+    const char *dir = getenv("TOTK_ROMFS_PATCHES_OUT"); char path[4096];
+    static const unsigned sizes[][2] = {{2560, 1440}};
     for (unsigned i = 0; i < sizeof sizes / sizeof *sizes; i++) {
-        if (!overlay_present(sizes[i][0], sizes[i][1], scene)) continue;
+        snprintf(path, sizeof path, "%s/%ux%u/manifest.tsv", dir ? dir : "extracted/" TOTK_GAME_DIR "/romfs-patches-out", sizes[i][0], sizes[i][1]);
+        FILE *f = fopen(path, "r");
+        if (!f) continue;
+        fclose(f);
         *w = sizes[i][0]; *h = sizes[i][1]; output_full_at_start = 0;
         fprintf(stderr, "[totk] bigger output (TOTK_OUTPUT_RES=auto): a %ux%u swapchain, starts at 1920x1080 (the default); the settings panel switches\n", *w, *h);
         return 1;
     }
-    fprintf(stderr, "[totk] bigger output (TOTK_OUTPUT_RES=auto): off, no %s overlay for 2560x1440 (make romfs-patches)\n", scene ? "scene" : "output");
+    fprintf(stderr, "[totk] bigger output (TOTK_OUTPUT_RES=auto): off, %s is missing (make romfs-patches)\n", path);
     return 0;
 #else
     (void)w; (void)h; return 0;
@@ -410,25 +375,20 @@ static int output_res(unsigned *w, unsigned *h) {
     return on;
 }
 int runtime_output_res(unsigned *w, unsigned *h) { return !CODE_PATCHED_AT_BUILD && output_res(w, h); }
-/* The scene render size the heaps must hold (the overlay name's -scene-<sw>x<sh>, runtime/romfs.c): on the Mac 1.2.1
-   keeps it at the canvas, like 1.4.3 does (game_patches_v143.c). iOS keeps the game's own heaps. */
-int runtime_render_res(unsigned *w, unsigned *h) { return !getenv("TOTK_EXPORT_IOS") && render_res(w, h); }
+/* Only 1.4.3 counts a bigger scene in its heaps (runtime_output_res_extra_bytes): no scene overlay here. */
+int runtime_render_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
 /* The canvas-sized render targets come from agl::utl::DynamicTextureAllocator (initialised once, main+0x8e1a98): a single
    heap of the HeapDef size "DynamicTextureAllocatorMem" (113664 KiB), carved from the "Graphics" heap (201728 KiB, the heap
    of gsys::SystemTask), with no parent to grow from. At 2560x1440 the title runs out of it (the allocator main+0x798934
-   then dereferences the null block, main+0x799390). The HeapDef overlay for the output and scene sizes
-   (scripts/make_output_res_overlay.py, loaded by runtime/romfs.c) scales DynamicTextureAllocatorMem with those pixels
-   (the scene with a 1.6 margin, the formula and its measurement from game_patches_v143.c), rounded up to whole MiB, and
-   grows Graphics by the same amount; the application pool grows by it too (rounded up to 2 MiB), so no other heap shrinks. */
+   then dereferences the null block, main+0x799390). The HeapDef overlay for the output size (scripts/make_output_res_overlay.py,
+   loaded by runtime/romfs.c) scales DynamicTextureAllocatorMem with the output pixels, rounded up to whole MiB, and grows
+   Graphics by the same amount; the application pool grows by it too (rounded up to 2 MiB), so no other heap shrinks. */
 uint64_t runtime_output_res_extra_bytes(void) {
-    unsigned w, h, sw, sh;
-    double grow = 0;
-    if (runtime_output_res(&w, &h) && (double)w * h > 1920.0 * 1080.0) grow += (double)w * h / (1920.0 * 1080.0) - 1;
-    int scene = runtime_render_res(&sw, &sh) && (double)sw * sh > 1600.0 * 900.0;
-    if (scene) grow += (double)sw * sh / (1600.0 * 900.0) - 1;
-    if (grow <= 0) return 0;
-    if (scene) grow *= 1.6;   /* the scene targets' margin, measured on 1.4.3 (game_patches_v143.c) */
-    uint64_t kib = (uint64_t)ceil(113664.0 * (1 + grow) / 1024.0) * 1024 - 113664;
+    unsigned w, h;
+    if (!runtime_output_res(&w, &h)) return 0;
+    double ratio = (double)w * h / (1920.0 * 1080.0);
+    if (ratio <= 1.0) return 0;
+    uint64_t kib = (uint64_t)ceil(113664.0 * ratio / 1024.0) * 1024 - 113664;
     return kib << 10;
 }
 enum { DP_OUTPUT_SIZE = 32, DP_RENDERER = 40 };   /* data page: the output size {w, h} the game reads; the renderer it stores */
@@ -471,11 +431,6 @@ static void output_size_set(uint64_t want) {
     _Atomic uint64_t *size = (_Atomic uint64_t *)(void *)(output_page + DP_OUTPUT_SIZE);
     if (atomic_load(size) == want) return;
     atomic_store(size, want);
-    if (render_page) {   /* the scene follows the canvas (patch_render_res): the layout re-run reads this page */
-        float v[2] = {(float)(unsigned)want, (float)(unsigned)(want >> 32)};
-        memcpy((void *)render_page + 16, v, sizeof v);
-        fprintf(stderr, "[totk] scene render size %ux%u (the canvas)\n", (unsigned)want, (unsigned)(want >> 32));
-    }
     uint64_t renderer = atomic_load((_Atomic uint64_t *)(void *)(output_page + DP_RENDERER));
     const char *before = "";
     if (renderer) {
@@ -487,44 +442,36 @@ static void output_size_set(uint64_t want) {
             renderer ? " from the next layout" : "; the game has not laid out its displays yet, it takes this size when it does", before);
 }
 /* The settings panel's resolution (runtime.h OUTPUT_MODE_*): 1080p, 1080p with the MetalFX output scaler, or the game's
-   canvas and UI at the native size (up to the swapchain's, 2K), the same with the MetalFX output scaler up to the window (a 4K
-   screen), or 720p, a 1280x720 canvas (the scene scales with it), also with the MetalFX output scaler; native 4K is the same idea at 3840x2160 when the app
-   carries the 4K heap overlay. All need a bigger-output start (TOTK_OUTPUT_RES=auto with the HeapDef overlay, or <w>x<h>). */
+   canvas and UI at the native size (the swapchain's, 2K), the same with the MetalFX output scaler up to the window (a 4K
+   screen), or 720p, a 1280x720 canvas (the scene scales with it). All need a bigger-output start (TOTK_OUTPUT_RES=auto
+   with the HeapDef overlay, or <w>x<h>). */
 int runtime_output_native(int mode, unsigned *w, unsigned *h) {
-    if (!output_page) return 0;
-    if (mode == OUTPUT_MODE_NATIVE_4K) {
-        if (output_w < 3840 || output_h < 2160) return 0;
-        *w = 3840; *h = 2160; return 1;
-    }
-    if (mode != OUTPUT_MODE_NATIVE && mode != OUTPUT_MODE_NATIVE_METALFX) return 0;
-    *w = output_w >= 3840 ? 2560 : output_w; *h = output_h >= 2160 ? 1440 : output_h; return 1;   /* native stays 2K; 4K is its own mode */
+    if (!output_page || (mode != OUTPUT_MODE_NATIVE && mode != OUTPUT_MODE_NATIVE_METALFX)) return 0;
+    *w = output_w; *h = output_h; return 1;
 }
 int runtime_output_modes(void) {
     if (!output_page) return 0;
-    return 1 << OUTPUT_MODE_OFF | 1 << OUTPUT_MODE_METALFX | 1 << OUTPUT_MODE_720P | 1 << OUTPUT_MODE_720P_METALFX | 1 << OUTPUT_MODE_NATIVE | 1 << OUTPUT_MODE_NATIVE_METALFX |
-           (output_w >= 3840 && output_h >= 2160 ? 1 << OUTPUT_MODE_NATIVE_4K : 0);
+    return 1 << OUTPUT_MODE_OFF | 1 << OUTPUT_MODE_METALFX | 1 << OUTPUT_MODE_720P | 1 << OUTPUT_MODE_NATIVE | 1 << OUTPUT_MODE_NATIVE_METALFX;
 }
 int runtime_output_mode(void) {
     extern int mfxup_output_enabled(void);
     if (!output_page) return OUTPUT_MODE_OFF;
     uint64_t now = atomic_load((_Atomic uint64_t *)(void *)(output_page + DP_OUTPUT_SIZE));
-    if (now == pack_size(1280, 720)) return mfxup_output_enabled() ? OUTPUT_MODE_720P_METALFX : OUTPUT_MODE_720P;
-    if (now == pack_size(3840, 2160) && !mfxup_output_enabled()) return OUTPUT_MODE_NATIVE_4K;
+    if (now == pack_size(1280, 720)) return OUTPUT_MODE_720P;
     if ((unsigned)now > 1920) return mfxup_output_enabled() ? OUTPUT_MODE_NATIVE_METALFX : OUTPUT_MODE_NATIVE;
     return mfxup_output_enabled() ? OUTPUT_MODE_METALFX : OUTPUT_MODE_OFF;
 }
 int runtime_output_mode_set(int mode) {
     extern void dm_gfx_set_flag(const char *name, int value);
-    if (!output_page || mode < OUTPUT_MODE_OFF || mode > OUTPUT_MODE_LAST || !(runtime_output_modes() & 1 << mode)) return 0;
+    if (!output_page || mode < OUTPUT_MODE_OFF || mode > OUTPUT_MODE_720P || !(runtime_output_modes() & 1 << mode)) return 0;
     unsigned w = 1920, h = 1080;
-    if (mode == OUTPUT_MODE_720P || mode == OUTPUT_MODE_720P_METALFX) { w = 1280; h = 720; }
-    else if (mode == OUTPUT_MODE_NATIVE || mode == OUTPUT_MODE_NATIVE_METALFX || mode == OUTPUT_MODE_NATIVE_4K) runtime_output_native(mode, &w, &h);
+    if (mode == OUTPUT_MODE_720P) { w = 1280; h = 720; }
+    else if (mode == OUTPUT_MODE_NATIVE || mode == OUTPUT_MODE_NATIVE_METALFX) runtime_output_native(mode, &w, &h);
     output_size_set(pack_size(w, h));
-    int mfx = mode == OUTPUT_MODE_METALFX || mode == OUTPUT_MODE_NATIVE_METALFX || mode == OUTPUT_MODE_720P_METALFX;
+    int mfx = mode == OUTPUT_MODE_METALFX || mode == OUTPUT_MODE_NATIVE_METALFX;
     dm_gfx_set_flag("mfx_output", mfx);
     dm_gfx_set_flag("mfx_upscale", mfx);
-    fprintf(stderr, "[totk] picture: %s\n", mode == OUTPUT_MODE_720P ? "720p" : mode == OUTPUT_MODE_720P_METALFX ? "720p, MetalFX to the window" : mode == OUTPUT_MODE_NATIVE_4K ? "native 4K" :
-            mode == OUTPUT_MODE_NATIVE_METALFX ? "native 2K, MetalFX to the window" :
+    fprintf(stderr, "[totk] picture: %s\n", mode == OUTPUT_MODE_720P ? "720p" : mode == OUTPUT_MODE_NATIVE_METALFX ? "native 2K, MetalFX to the window" :
             mode == OUTPUT_MODE_NATIVE ? "native" :
             mode == OUTPUT_MODE_METALFX ? "MetalFX 2K" : "off (1080p)");
     return 1;
@@ -555,9 +502,64 @@ static void check_site(const Module *m, const GamePatch *p) {
     }
 }
 
-/* TOTK_PCHTXT=<file> (runtime/pchtxt.h, the reader both games share): this runtime's own patches check the original
-   words they replace, so they refuse a file that overlaps them; no further sites are reserved. */
-static void patch_pchtxt(Module *m) { pchtxt_apply(m, "totk", NULL, 0); }
+/* TOTK_PCHTXT=<file>: an emulator ExeFS patch for main in pchtxt form, as community mods ship them (for example
+   TOTK-Ultrawide's aspect-ratio patch), for trying them here. Mac only: the phone's code is patched at build. Its
+   @nsobid must be main's build id, read from the extracted ExeFS (extracted/<version>/exefs/main at 0x40); the lines
+   after @enabled are "<main address> <bytes>", @disabled switches the lines that follow off again (a section the author
+   keeps without applying it) and @stop ends the file. "@flag offset_shift 0x100" must come before the first patch line:
+   it says the addresses leave out the NSO header only the IPS form counts, which is how they are applied here; a file
+   without it, or with another shift, would land 0x100 bytes off and stops the start. "@flag print_values" (a display
+   option of the patching tools) is accepted, any other flag stops the start. The same reading as the build's --mod
+   (scripts/mod_exefs.py). It is applied before this runtime's own patches, whose checks of the original words then
+   refuse a file that overlaps them. */
+static void patch_pchtxt(Module *m) {
+    const char *path = getenv("TOTK_PCHTXT");
+    if (!path || !*path) return;
+    FILE *f = fopen(path, "r");
+    if (!f) runtime_fail("TOTK_PCHTXT: cannot open the file");
+    char nso[256], want[41] = {0}; uint8_t id[20];
+    snprintf(nso, sizeof nso, "extracted/%s/exefs/main", TOTK_GAME_DIR);
+    FILE *n = fopen(nso, "rb");
+    if (n) {
+        if (fseek(n, 0x40, SEEK_SET) || fread(id, 1, sizeof id, n) != sizeof id) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main");
+        fclose(n);
+        for (int i = 0; i < 20; i++) snprintf(want + 2 * i, 3, "%02X", id[i]);
+    } else {
+        snprintf(nso, sizeof nso, "extracted/%s/exefs/main.build-id", TOTK_GAME_DIR);
+        FILE *b = fopen(nso, "r");
+        if (!b || fscanf(b, "%40[0-9A-Fa-f]", want) != 1 || strlen(want) != 40) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main or main.build-id");
+        fclose(b);
+    }
+    char line[1024]; int enabled = 0, matched = 0, shifted = 0; unsigned count = 0, bytes = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (!strncmp(line, "@nsobid-", 8)) {
+            if (strncasecmp(line + 8, want, 40)) runtime_fail("TOTK_PCHTXT is for another build of main");
+            matched = 1; continue;
+        }
+        if (!strncmp(line, "@enabled", 8)) { enabled = 1; continue; }
+        if (!strncmp(line, "@disabled", 9)) { enabled = 0; continue; }
+        if (!strncmp(line, "@flag", 5)) {
+            char name[64] = "", value[64] = "";
+            sscanf(line + 5, "%63s %63s", name, value);
+            if (!strcmp(name, "print_values")) continue;
+            if (strcmp(name, "offset_shift")) runtime_fail("TOTK_PCHTXT: only @flag offset_shift 0x100 and print_values are supported");
+            if (strtoull(value, NULL, 16) != 0x100) runtime_fail("TOTK_PCHTXT: @flag offset_shift must be 0x100 (the addresses are main addresses)");
+            shifted = 1; continue;
+        }
+        if (!strncmp(line, "@stop", 5)) break;
+        unsigned long long at; char hex[512];
+        if (!enabled || line[0] == '@' || sscanf(line, "%llx %511s", &at, hex) != 2) continue;
+        size_t len = strlen(hex);
+        if (!matched) runtime_fail("TOTK_PCHTXT: patches before its @nsobid line");
+        if (!shifted) runtime_fail("TOTK_PCHTXT: no @flag offset_shift 0x100 before the first patch line");
+        if (len % 2 || at + len / 2 > m->file_size) runtime_fail("TOTK_PCHTXT: a patch line is malformed or outside main");
+        for (size_t i = 0; i < len / 2; i++) { unsigned v; sscanf(hex + 2 * i, "%2x", &v); m->base[at + i] = (uint8_t)v; }
+        count++; bytes += (unsigned)(len / 2);
+    }
+    fclose(f);
+    if (!matched) runtime_fail("TOTK_PCHTXT has no @nsobid line");
+    fprintf(stderr, "[totk] TOTK_PCHTXT %s: %u patches, %u bytes in main (build id %s)\n", path, count, bytes, want);
+}
 
 /* High frame rates (#61, sky-island trampolines): main+0xce3fec (1.0.0) compares X+0x28 with 100 and, when greater,
    scales the velocity Link takes over from the ground body by 0.1. X is the game's time object ([GOT]+0xc8; X+0x38 the
@@ -592,8 +594,8 @@ static void patch_slowmo_bounce(Module *m) {
             TOTK_GAME_VERSION, (unsigned long long)stub);
 }
 
-#if defined(TOTK_GAME_V121)
-/* 1.2.1 cursors and aim that moved a fixed step per frame (#285). Both updates already read the game's 30 Hz frame ratio
+#if defined(TOTK_GAME_V121) || defined(TOTK_GAME_V111)
+/* Cursors and aim that moved a fixed step per frame (#285). Both updates already read the game's 30 Hz frame ratio
    (1 at 30 fps, 0.5 at 60, 0.25 at 120) for their smoothing but leave it out of the step itself, so the map cursor and
    the vertical Ultrahand aim ran twice as fast at 60 fps and four times as fast at 120 as at the shipping 30 fps. Each
    veneer multiplies the step by that ratio, which gives the shipping speed at any frame rate. The veneers sit in main's
@@ -608,45 +610,50 @@ static void patch_slowmo_bounce(Module *m) {
    Aim gyro, vertical (main+0x1d484e4, used by Recall's aim): the same update copies the gyro's angular velocity each
    frame (main+0xd184cc) and subtracts velocity * sensitivity from its vertical gyro accumulator once per frame (fmul
    s3, s9, s0); the horizontal gyro uses the change of attitude and was right. The veneer multiplies by [x20 + 8] too.
-   TOTK_MAP_CURSOR_REALTIME=0 / TOTK_ULTRAHAND_REALTIME=0 leave each one as shipped. */
+   1.1.1 has the same three places in its own main (map_version_sites.py --from v121 --to v111): the map cursor at
+   main+0xf54028, the vertical aim at main+0x1d50954 and the vertical aim gyro at main+0x1d500d4, every original word
+   unchanged. TOTK_MAP_CURSOR_REALTIME=0 / TOTK_ULTRAHAND_REALTIME=0 leave each one as shipped. */
 static void cursor_veneer(Module *m, const char *what, const char *env, uint64_t site, uint32_t original,
                           unsigned at, const uint32_t *code, unsigned n) {
     const char *e = getenv(env);
-    if (e && !strcmp(e, "0")) { fprintf(stderr, "[totk] 1.2.1 %s: as shipped (%s=0)\n", what, env); return; }
+    if (e && !strcmp(e, "0")) { fprintf(stderr, "[totk] %s %s: as shipped (%s=0)\n", TOTK_GAME_VERSION, what, env); return; }
     const uint64_t stub = ((m->text_end + 15) & ~15ULL) + at;
-    if (stub + 4 * (n + 1) > ((m->text_end + 0xfff) & ~0xfffULL)) runtime_fail("1.2.1 cursor veneer layout");
+    if (stub + 4 * (n + 1) > ((m->text_end + 0xfff) & ~0xfffULL)) runtime_fail("cursor veneer layout");
     if (!CODE_PATCHED_AT_BUILD) {
         uint32_t w; memcpy(&w, m->base + site, 4);
         if (w != original) {
             fprintf(stderr, "[totk] %s main+%#llx: found %08x expected %08x\n", what, (unsigned long long)site, w, original);
-            runtime_fail("1.2.1 cursor: original instruction mismatch");
+            runtime_fail("cursor: original instruction mismatch");
         }
-        for (unsigned i = 0; i < 4 * (n + 1); i++) if (m->base[stub + i]) runtime_fail("1.2.1 cursor veneer padding not empty");
+        for (unsigned i = 0; i < 4 * (n + 1); i++) if (m->base[stub + i]) runtime_fail("cursor veneer padding not empty");
     }
-    for (unsigned i = 0; i < n; i++) put_word(m, stub + 4 * i, code[i], "1.2.1 cursor veneer");
-    put_word(m, stub + 4 * n, branch_to(stub + 4 * n, site + 4), "1.2.1 cursor veneer");
-    put_word(m, site, branch_to(site, stub), "1.2.1 cursor step");
-    fprintf(stderr, "[totk] 1.2.1 %s: one speed at any frame rate, veneer +%#llx\n", what, (unsigned long long)stub);
+    for (unsigned i = 0; i < n; i++) put_word(m, stub + 4 * i, code[i], "cursor veneer");
+    put_word(m, stub + 4 * n, branch_to(stub + 4 * n, site + 4), "cursor veneer");
+    put_word(m, site, branch_to(site, stub), "cursor step");
+    fprintf(stderr, "[totk] %s %s: one speed at any frame rate, veneer +%#llx\n", TOTK_GAME_VERSION, what,
+            (unsigned long long)stub);
 }
-static void patch_cursor_speed(Module *m) {
+static void patch_cursor_speed(Module *m, const uint64_t *sites) {
     static const uint32_t map[] = {0xf94002e9,    /* ldr x9, [x23]: the frame-rate object */
                                    0xbd400930,    /* ldr s16, [x9, #8]: its 30 Hz ratio */
                                    0x1e300800,    /* fmul s0, s0, s16 */
                                    0xbd400361};   /* ldr s1, [x27]: the replaced instruction */
-    cursor_veneer(m, "map cursor", "TOTK_MAP_CURSOR_REALTIME", 0xec3d9c, 0xbd400361, 512, map, 4);
+    cursor_veneer(m, "map cursor", "TOTK_MAP_CURSOR_REALTIME", sites[0], 0xbd400361, 512, map, 4);
     static const uint32_t aim[] = {0x1e2a198c,    /* fdiv s12, s12, s10: the replaced instruction */
                                    0xbd400a90,    /* ldr s16, [x20, #8]: the update's 30 Hz ratio */
                                    0x1e30098c};   /* fmul s12, s12, s16 */
-    cursor_veneer(m, "Ultrahand vertical aim", "TOTK_ULTRAHAND_REALTIME", 0x1d48d64, 0x1e2a198c, 544, aim, 3);
+    cursor_veneer(m, "Ultrahand vertical aim", "TOTK_ULTRAHAND_REALTIME", sites[1], 0x1e2a198c, 544, aim, 3);
     static const uint32_t gyro[] = {0x1e200923,   /* fmul s3, s9, s0: the replaced instruction (velocity * sensitivity) */
                                     0xbd400a90,   /* ldr s16, [x20, #8]: the update's 30 Hz ratio */
                                     0x1e300863};  /* fmul s3, s3, s16 */
-    cursor_veneer(m, "aim gyro, vertical", "TOTK_ULTRAHAND_REALTIME", 0x1d484e4, 0x1e200923, 576, gyro, 3);
+    cursor_veneer(m, "aim gyro, vertical", "TOTK_ULTRAHAND_REALTIME", sites[2], 0x1e200923, 576, gyro, 3);
 }
 #endif
 
-#if defined(TOTK_GAME_V121)
-/* Benchmark camera for 1.2.1 (survey sessions only; see game_patches_v143.c for the block on the data page at +0x100).
+#if defined(TOTK_GAME_V121) || defined(TOTK_GAME_V111)
+/* Benchmark camera for 1.2.1 and 1.1.1 (survey sessions only; see game_patches_v143.c for the block on the data page at
+   +0x100). 1.1.1 has the same three sites in its own main (map_version_sites.py --from v121 --to v111): the camera at
+   main+0xce3994, the HUD layer at main+0x884e08 and the time-of-day hook at main+0xbc6b08, every original word unchanged.
    1.2.1's look-at camera update stores eye, target and up into the camera in x20 at main+0xcb4390..0xcb4464 and then
    calls its virtual matrix update with x1 = camera+8 (main+0xcb4468..0xcb4474), which reads those fields; the add at
    main+0xcb4468 branches to a stub that, while the block is active, writes the benchmark camera over them and the FOV
@@ -657,13 +664,12 @@ static void patch_cursor_speed(Module *m) {
    The stubs sit after the rewriter's patch area (main+file_size up to the data page, executable like the rest of that
    area and never written by the rewriter): main's text padding is taken by the aspect stubs (+0), the bounce veneer
    (+128) and the cloth/hair clock (+160). */
-static void patch_bench_cam(Module *m) {
+static void patch_bench_cam(Module *m, const uint64_t *sites) {
 #if TARGET_OS_IPHONE
-    (void)m;
+    (void)m; (void)sites;
 #else
     const char *survey = getenv("TOTK_SURVEY");
     if (!survey || strcmp(survey, "1")) return;
-    static const uint64_t sites[] = {0xcb4468, 0x977808, 0xab92cc};   /* camera, HUD layer, time of day */
     const uint64_t site = sites[0], hsite = sites[1], csite = sites[2], block = 0x100;
     uint64_t data = (m->file_size + 0x3fff) & ~0x3fffULL, stub = (m->file_size + 15) & ~15ULL;   /* the patch area's tail */
     static const uint32_t body[] = {
@@ -696,15 +702,15 @@ static void patch_bench_cam(Module *m) {
                          branch_to(cstub + 36, csite + 4)};
     uint32_t got;
     memcpy(&got, m->base + csite, 4);
-    if (got != 0xa9ba7bfd) runtime_fail("1.2.1 benchmark time of day: the game code does not match");
+    if (got != 0xa9ba7bfd) runtime_fail("benchmark time of day: the game code does not match");
     memcpy(&got, m->base + site, 4);
-    if (got != 0x91002281) runtime_fail("1.2.1 benchmark camera: the camera code does not match");
+    if (got != 0x91002281) runtime_fail("benchmark camera: the camera code does not match");
     memcpy(&got, m->base + hsite, 4);
-    if (got != 0x6db82beb) runtime_fail("1.2.1 benchmark HUD hiding: the game code does not match");
+    if (got != 0x6db82beb) runtime_fail("benchmark HUD hiding: the game code does not match");
     if (stub < m->patch_off || cstub + sizeof cwords > data || data + block + 256 > m->size)
-        runtime_fail("1.2.1 benchmark camera layout");
+        runtime_fail("benchmark camera layout");
     for (unsigned i = 0; i < sizeof words + sizeof twords + sizeof cwords; i++)
-        if (m->base[stub + i]) runtime_fail("1.2.1 benchmark camera padding not empty");
+        if (m->base[stub + i]) runtime_fail("benchmark camera padding not empty");
     memset(m->base + data + block, 0, 256);
     memcpy(m->base + cstub, cwords, sizeof cwords);
     uint32_t cjump = branch_to(csite, cstub);
@@ -716,8 +722,8 @@ static void patch_bench_cam(Module *m) {
     jump = branch_to(hsite, tstub);
     memcpy(m->base + hsite, &jump, 4);
     runtime_bench_cam = m->base + data + block;
-    fprintf(stderr, "[totk] 1.2.1 benchmark camera: look-at and FOV override at main+%#llx, HUD hiding at main+%#llx, stubs +%#llx\n",
-            (unsigned long long)site, (unsigned long long)hsite, (unsigned long long)stub);
+    fprintf(stderr, "[totk] %s benchmark camera: look-at and FOV override at main+%#llx, HUD hiding at main+%#llx, stubs +%#llx\n",
+            TOTK_GAME_VERSION, (unsigned long long)site, (unsigned long long)hsite, (unsigned long long)stub);
 #endif
 }
 #endif
@@ -730,14 +736,21 @@ static void patch_bench_cam(Module *m) {
    texture past 2 GiB then got a negative offset: storage and source 4 GiB below the pool, in the stack region or other
    memory (refused uploads, garbage textures, a SIGBUS in ReadTexels, one in the packaged-data copy). It was the only pool
    over 2 GiB (the next is 252 MiB). Both now widen the offset unsigned, which covers a pool of up to 4 GiB.
-   Sites mapped with scripts/map_version_sites.py --from v121 (1.0.0: the same words);
-   1.4.3 has its own patch source (game_patches_v143.c) and is not covered. TOTK_POOL_OFFSET_PATCH=0 leaves them as shipped too. */
+   Sites mapped with scripts/map_version_sites.py --from v112 (1.0.0: the same words); 1.1.1 mapped the same way from
+   1.2.1 (main+0xae5260 and main+0xae527c, every original word unchanged); 1.1.2 has no image here and stays as shipped;
+   1.4.3 has its own patch source (game_patches_v143.c) and is not covered. TOTK_POOL_OFFSET_PATCH=0 leaves them as
+   shipped too. */
 static void patch_pool_offset(Module *m) {
 #if defined(TOTK_GAME_V121)
     static const uint64_t sites[] = {0xad43f0, 0xad440c};
+#elif defined(TOTK_GAME_V111)
+    static const uint64_t sites[] = {0xae5260, 0xae527c};
+#elif defined(TOTK_GAME_V112)
+    static const uint64_t *const sites = NULL;   /* not mapped */
 #else
     static const uint64_t sites[] = {0xa7d320, 0xa7d33c};
 #endif
+#if !defined(TOTK_GAME_V112)
     const char *e = getenv("TOTK_POOL_OFFSET_PATCH");   /* the Mac only: an iPhone / iPad build ships the code already patched */
     if (!CODE_PATCHED_AT_BUILD && e && !strcmp(e, "0")) { fprintf(stderr, "[totk] %s texture pool offsets: as shipped (TOTK_POOL_OFFSET_PATCH=0)\n", TOTK_GAME_VERSION); return; }
     const struct { uint64_t site; uint32_t original, replacement; const char *what; } words[] = {
@@ -754,6 +767,10 @@ static void patch_pool_offset(Module *m) {
     for (unsigned i = 0; i < 2; i++) put_word(m, words[i].site, words[i].replacement, "texture pool offset");
     fprintf(stderr, "[totk] %s texture pool offsets: widened unsigned at main+%#llx and main+%#llx\n", TOTK_GAME_VERSION,
             (unsigned long long)words[0].site, (unsigned long long)words[1].site);
+#else
+    (void)m; (void)sites;
+    fprintf(stderr, "[totk] %s texture pool offsets: as shipped (the loader's sites are not mapped for this version)\n", TOTK_GAME_VERSION);
+#endif
 }
 
 void runtime_game_patches(Module *m) {
@@ -780,25 +797,41 @@ void runtime_game_patches(Module *m) {
     }
     patch_pchtxt(m);   /* first: the runtime's own patches check the original words they replace */
     if (realtime_enabled()) patch_realtime(m);
-    else fprintf(stderr,"[totk] real-time frame step off (TOTK_REALTIME=0)\n");
+    else fprintf(stderr,"[totk] real-time frame step off\n");
     patch_render_res(m);
     patch_output_res(m);
     patch_slowmo_bounce(m);
 #if defined(TOTK_GAME_V121)
-    patch_cursor_speed(m);
+    { static const uint64_t sites[] = {0xec3d9c, 0x1d48d64, 0x1d484e4};   /* map cursor, vertical aim, aim gyro */
+      patch_cursor_speed(m, sites); }
+#elif defined(TOTK_GAME_V111)
+    { static const uint64_t sites[] = {0xf54028, 0x1d50954, 0x1d500d4};   /* map cursor, vertical aim, aim gyro */
+      patch_cursor_speed(m, sites); }
 #endif
     patch_pool_offset(m);
     patch_trap(m);
+/* Other picture shapes (aspect_patch.h): 1.2.1 and 1.1.1 have the same four sites in their own main
+   (map_version_sites.py --from v121 --to v111; every original word unchanged) and the same text padding for the stubs:
+   the aspect stubs take the first 128 bytes, the bounce veneer +128 and the cloth/hair clock +160, so there is none left
+   for Vert+ stubs (1.4.3 only). The two viewport sites are byte-identical copies of one routine in both versions, so
+   1.1.1's pair is 1.2.1's in order. */
 #if defined(TOTK_GAME_V121)
     { static const uint64_t sites[] = {0xcb4b10, 0x12521cc, 0x19b36f0, 0x1ecdf68};   /* camera x2, viewport x2 (aspect_patch.h) */
       aspect_install(m, "1.2.1", sites, 4, 2, (m->text_end + 15) & ~15ULL, 0,   /* no free padding for Vert+ stubs */
                      (m->file_size + 0x3fff) & ~0x3fffULL); }
-    patch_bench_cam(m);
+    { static const uint64_t sites[] = {0xcb4468, 0x977808, 0xab92cc};   /* camera, HUD layer, time of day */
+      patch_bench_cam(m, sites); }
+#elif defined(TOTK_GAME_V111)
+    { static const uint64_t sites[] = {0xce403c, 0x12624f4, 0x19c013c, 0x1ed6710};   /* camera x2, viewport x2 */
+      aspect_install(m, "1.1.1", sites, 4, 2, (m->text_end + 15) & ~15ULL, 0,   /* no free padding for Vert+ stubs */
+                     (m->file_size + 0x3fff) & ~0x3fffULL); }
+    { static const uint64_t sites[] = {0xce3994, 0x884e08, 0xbc6b08};   /* camera, HUD layer, time of day */
+      patch_bench_cam(m, sites); }
 #else
     if (aspect_requested()) runtime_fail("TOTK_ASPECT: only 1.2.1 and 1.4.3 so far");
 #endif
     if (!fps60_enabled()) {
-        fprintf(stderr, "[totk] 60 FPS patch off (TOTK_FPS60=0): shipping present interval range 2..3\n");
+        fprintf(stderr, "[totk] 60 FPS patch off: shipping present interval range 2..3\n");
         return;
     }
     for (size_t i = 0; i < n; i++) check_site(m, &fps60_sites[i]);   /* verify all before writing any */
