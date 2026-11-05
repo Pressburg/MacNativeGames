@@ -125,6 +125,48 @@
 #define GAME_ADDR_0x8f6cbc 0x8f2798
 #define GAME_ADDR_0xce3fec 0xbda798
 #define GAME_OUTPUT_CALL_WORD 0x94000083u
+#elif defined(TOTK_GAME_V111)
+/* Tears of the Kingdom 1.1.1: only main differs from 1.1.2 (rtld / sdk / subsdk0 are byte-identical), but its main is a
+   different build, so every site moved. Mapped with scripts/map_version_sites.py --from v121 --to v111. */
+#define TOTK_GAME_VERSION "1.1.1"
+#define TOTK_GAME_DIR "v111"
+#define GAME_ACTOR_NAME 0x218
+#define GAME_ACTOR_POS 0x2b4
+#define GAME_ACTOR_ROT 0x2c0
+#define GAME_ADDR_0x8f6c60 0x81fef8
+#define GAME_ADDR_0x8f6c64 0x81fefc
+#define GAME_ADDR_0x8f6c88 0x81ff20
+#define GAME_ADDR_0x8f6d18 0x81ffb0
+#define GAME_ADDR_0x8f6d28 0x81ffc0
+#define GAME_ADDR_0x8f6d7c 0x820014
+#define GAME_ADDR_0x8f6d98 0x820030
+#define GAME_ADDR_0x7a83f4 0x783164
+#define GAME_ADDR_0x7a83f8 0x783168
+#define GAME_ADDR_0x7a83fc 0x78316c
+#define GAME_ADDR_0x7a8400 0x783170
+#define GAME_ADDR_0x7a840c 0x78317c
+#define GAME_ADDR_0x7a8410 0x783180
+#define GAME_ADDR_0x8f68b8 0x81fb50
+#define GAME_ADDR_0x8f68bc 0x81fb54
+#define GAME_ADDR_0x8f68cc 0x81fb64
+#define GAME_ADDR_0x8f68d0 0x81fb68
+#define GAME_ADDR_0xc630bc 0xceca68
+#define GAME_ADDR_0xc630c4 0xceca70
+#define GAME_ADDR_0xc630c8 0xceca74
+#define GAME_ADDR_0xe996ac 0xecb04c
+#define GAME_ADDR_0xe996b0 0xecb050
+#define GAME_ADDR_0xc630a4 0xceca50
+#define GAME_ADDR_0xc630a8 0xceca54
+#define GAME_ADDR_0xc630ac 0xceca58
+#define GAME_ADDR_0x69a18c 0x9e20d0
+#define GAME_ADDR_0x15ecb0c 0x1636170
+#define GAME_ADDR_0xe995c4 0xecaf64
+#define GAME_ADDR_0x4663f08 0x4732b78
+#define GAME_ADDR_0x2aa4fa0 0x2b26620
+#define GAME_ADDR_0x453f648 0x46205b0
+#define GAME_ADDR_0x8f6cbc 0x81ff54
+#define GAME_ADDR_0xce3fec 0xbea414
+#define GAME_OUTPUT_CALL_WORD 0x94000083u
 #else
 #define TOTK_GAME_VERSION "1.0.0"
 #define TOTK_GAME_DIR "v0"

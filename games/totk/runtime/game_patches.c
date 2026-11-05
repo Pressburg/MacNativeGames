@@ -135,6 +135,10 @@ typedef struct { uint64_t fmul, store; unsigned r, f; int off; int pair; } Cloth
 static const ClothInline cloth_inline[3] = {{0x82192c, 0x821928, 0, 8, 0x124, 0}, {0x822a64, 0x822a40, 0, 8, 0x124, 0},
                                             {0x83182c, 0x831830, 1, 0, 0x134, 0}};
 static const uint64_t cloth_call = 0x8222f0, cloth_update = 0x89822c;
+#elif defined(TOTK_GAME_V111)
+static const ClothInline cloth_inline[3] = {{0xa53780, 0xa5377c, 0, 8, 0x144, 0}, {0xa546bc, 0xa54698, 0, 8, 0x144, 0},
+                                            {0xa68f10, 0xa68f14, 1, 0, 0x134, 0}};
+static const uint64_t cloth_call = 0xa54174, cloth_update = 0x7d92d4;
 #else
 static const ClothInline cloth_inline[3] = {{0x7b5988, 0x7b598c, 0, 8, -0x40, 1}, {0x7b6b28, 0x7b6b2c, 0, 8, -0x40, 1},
                                             {0x7f5ec4, 0x7f5ed0, 1, 0, 0x114, 0}};
