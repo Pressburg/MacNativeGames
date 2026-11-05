@@ -69,7 +69,7 @@ def flvi_keys(data, base):
         pos += size
     return out
 
-COMMON = {'v0': '100', 'v121': '110', 'v143': '140'}   # the version in each game's Common archive name
+COMMON = {'v0': '100', 'v111': '110', 'v121': '110', 'v143': '140'}   # the version in each game's Common archive name
 
 
 def common_archive(version):

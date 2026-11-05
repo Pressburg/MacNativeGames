@@ -79,7 +79,7 @@ void vr_b2_present_eye(int eye) { (void)eye; }
 #include <spawn.h>
 #include <sys/wait.h>
 #include "totk_vr_link.h"
-#include "../../third_party/d2r_gfx/gfx/nvn/fps_overlay.h"   /* the graphics layer (zeldaVR sits beside it in games/totk) */
+#include "third_party/d2r_gfx/gfx/nvn/fps_overlay.h"   /* the graphics layer (zeldaVR sits beside it in games/totk) */
 
 enum { SRC_SLOTS = 5, IMAGES = 3, SWAPCHAIN_ID = 1 };   // SRC_SLOTS: B1 keeps each eye's newest picture besides the one being written
 
