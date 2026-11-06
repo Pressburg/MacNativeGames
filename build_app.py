@@ -57,8 +57,9 @@ import mod_folder                  # noqa: E402  the player's RomFS mod folder: 
 EXPECTED = json.loads((GAME / 'assets/expected-v1.0.0.json').read_text())
 UPDATED121 = json.loads((GAME / 'assets/expected-v1.2.1.json').read_text())
 UPDATED143 = json.loads((GAME / 'assets/expected-v1.4.3.json').read_text())
-VERSIONS = {'v0': EXPECTED, 'v121': UPDATED121, 'v143': UPDATED143}   # 1.1.2 (v112) removed 2026-11-02
-UPDATES = ('v121', 'v143')
+UPDATED111 = json.loads((GAME / 'assets/expected-v1.1.1.json').read_text())
+VERSIONS = {'v0': EXPECTED, 'v111': UPDATED111, 'v121': UPDATED121, 'v143': UPDATED143}   # 1.1.2 (v112) removed 2026-11-02; 1.1.1 (v111) is this fork's port (docs/v1.1.1-port.md)
+UPDATES = ('v111', 'v121', 'v143')
 # Breath of the Wild (games/botw; botw.md in the Tears of the Kingdom project): 1.6.0 as one card image with the base game, the
 # update and the add-on content; 1.9.0 as a base NSP plus the 1.9.0 update NSP, or a card image holding that update. The game is
 # chosen by the title IDs of the NCAs in the game file, never by its name.
@@ -486,7 +487,7 @@ def identify_update(tree, game, keys, logs):
     version = next((version for version in UPDATES
                     if exefs_matches(staging / 'exefs', VERSIONS[version]['exefs_sha256'], VERSIONS[version]['title_id'])), None)
     if version is None:
-        raise BuildError('unsupported update module hashes; expected 1.2.1 or 1.4.3 (the file name is not used to choose a version)')
+        raise BuildError('unsupported update module hashes; expected 1.1.1, 1.2.1 or 1.4.3 (the file name is not used to choose a version)')
     target = tree / f'extracted/{version}'
     target.mkdir(parents=True, exist_ok=True)
     if (target / 'exefs').exists(): shutil.rmtree(target / 'exefs')
@@ -1078,7 +1079,7 @@ def step_update_data(tree, game, update, keys, logs, *, version, mod=None, nativ
     if heapdef:
         say(f'2/4 update: the overlays are built on the mod\'s heap sizes ({heapdef})')
     steps = [('make_romfs_patches.py', [])] + [('make_output_res_overlay.py', [size]) for size in OUTPUT_SIZES]
-    if version in ('v143', 'v121'):   # a TOTK_RENDER_RES scene above 1600x900 grows the same heaps (runtime/game_patches*.c)
+    if version in ('v143', 'v121', 'v111'):   # a TOTK_RENDER_RES scene above 1600x900 grows the same heaps (runtime/game_patches*.c)
         steps += [('make_output_res_overlay.py', [canvas, '--scene', scene])
                   for canvas in ('1920x1080', *OUTPUT_SIZES) for scene in ('1920x1080', *OUTPUT_SIZES)]
     remove_large_output_overlays(tree, version)   # remove stale 4K/5K overlays even when a later build disables them
@@ -2813,8 +2814,8 @@ def main(argv):
             f'<folder>.backup-<date>-<time>, not deleted. Without the flag the build leaves the folder alone.')
     if update:
         version, update = identify_update(tree, update, keys, logs)
-    if args.native_4k and (args.platform != 'macos' or version not in ('v143', 'v121')):
-        raise BuildError('--native-4k needs 1.2.1 or the 1.4.3 update and a Mac build (the other versions and iPhone / iPad have no 4K output)')
+    if args.native_4k and (args.platform != 'macos' or version not in ('v143', 'v121', 'v111')):
+        raise BuildError('--native-4k needs 1.1.1, 1.2.1 or the 1.4.3 update and a Mac build (the other versions and iPhone / iPad have no 4K output)')
     if args.native_5k and (args.platform != 'macos' or version != 'v143'):
         raise BuildError('--native-5k needs the 1.4.3 update and a Mac build')
     if args.vr and (args.platform != 'macos' or version != 'v143' or args.native_4k is False):
@@ -2824,8 +2825,8 @@ def main(argv):
     native_5k = native_5k_enabled(args.platform, version, args.native_5k, args.native_4k)
     native_4k = True if native_5k else args.native_4k
     if native_4k is None:
-        native_4k = args.platform == 'macos' and version in ('v143', 'v121') and native_4k_default()
-    if version in ('v143', 'v121') and args.platform == 'macos':
+        native_4k = args.platform == 'macos' and version in ('v143', 'v121', 'v111') and native_4k_default()
+    if version in ('v143', 'v121', 'v111') and args.platform == 'macos':
         say('native 4K: ' + ('on' if native_4k else 'off') + ('' if args.native_4k is not None else
             ' (this Mac has ' + ('16 GB or more' if native_4k else 'less than 16 GB') + ' of memory; --native-4k / --no-native-4k decide)'))
     if args.platform == 'macos' and version == 'v143':

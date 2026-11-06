@@ -196,7 +196,7 @@ static void settings_save_frame(void) {
 }
 /* Ambient occlusion (PR #1316): ssao.txt holds off or the strength and radius in percent, read before the guest starts
    because the shaders are patched as they load. The levels the row offers; a hand-written percent is kept too. */
-#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190) || defined(TOTK_GAME_V121)
+#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190) || defined(TOTK_GAME_V121) || defined(TOTK_GAME_V111)
 #define SETTINGS_SSAO 1
 #endif
 static int settingsSsao;   /* the saved choice: 0 off, else percent */
