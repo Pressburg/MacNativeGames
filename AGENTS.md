@@ -53,7 +53,7 @@ version key it belongs to, so `grep -n v121 <file>` finds the anchor even if ups
 | `build_app.py` | `UPDATED111 = json.loads((GAME / 'assets/expected-v1.1.1.json').read_text())`, `'v111': UPDATED111` in `VERSIONS`, `'v111'` in `UPDATES`, `'v111'` in the scene-overlay step list and the `--native-4k` gates, and 1.1.1 in the unsupported-update error message |
 | `games/totk/Makefile` | the `game-data-v111` eval and the `runtime-v111` / `binary-v111` targets. **Copy upstream's current `*-v121` rule verbatim** (new source files like `runtime/input_prompts.m` arrive via the wildcard; a stale copied list breaks the link) then swap the identifiers and add `-DTOTK_GAME_V111=1` |
 | `games/totk/scripts/*` | add `v111` to every version-choice list where `v121` appears: `patch_sites.py` (VERSIONS/GUARDS/PATCHER), `prepare_runtime.py` (+ the 1.1.1 main-hash assert `d16accd1…`), `prepare_romfs_backend.py`, `prepare_shared_fonts.py`, `make_romfs_patches.py` (COMMON `'v111': '110'`), `make_mod_manifest.py`, `make_output_res_overlay.py` (choices + the `--scene` assert), `game_version_test.py`, `verify_boot.py` (+ checkpoint `0xecaf64`), `verify_loader.py`, `verify_romfs.py`, `verify_rewrites.py`, `verify_cloth_clock.py` (+ the v111 row), `test_exclusive_windows.py` (`[0x728948]`) |
-| `games/totk/runtime/settings_panel.h` | `SETTINGS_SSAO` also compiles for `defined(TOTK_GAME_V111)` (the 1.2.1-gated SSAO row, ported 2026-11-06) |
+| `games/totk/runtime/settings_panel.h` | **no port hunk needed** — upstream (2026-11-10+) ungated `SETTINGS_SSAO` (`#define SETTINGS_SSAO 1` unconditionally) and dropped the `contrib_submit.h` include (replaced by `input_prompts.h` + the contrib-tab upload page). Resolve any conflict by taking upstream's version of the file. |
 | `games/totk/zeldaVR` | real directory (see rule 4) |
 
 Conflict cues: a conflict in `game_version.h` / `game_patches.c` means upstream changed a shared table's
@@ -100,9 +100,12 @@ git diff upstream/main..totk-1.1.1-port -- build_app.py games/totk/scripts/make_
 git apply -3 /tmp/port-apply.patch && git apply -3 /tmp/port-apply-builder.patch   # -3: one file's context moves
 ln -s "$PWD/../.venv" .venv
 cd games/totk && ln -s ../../../../extracted extracted && ln -s ../../../../rewritten rewritten && ln -s ../../../../analysis analysis
-# upstream's settings_panel.h now includes "contrib_submit.h" (shared from games/alc/runtime/);
+# upstream's settings_panel.h (new tip) needs "contrib_submit.h" (shared from games/alc/runtime/);
 # build_app.py copies it during a real build, but a raw make does not, so symlink it:
 ln -s ../../../../alc/runtime/contrib_submit.h runtime/contrib_submit.h
+# upstream's runtime now also ships runtime/input_prompts.m (used by totk_prompt_icons.m);
+# the port's v111 rule must list it too — copy upstream's current *-v121 rule verbatim
+# (the procedure above) and it comes along; if you hand-edited, add it to the link line.
 make build/totk-native-v111        # the proof: the port compiles on the new upstream
 ```
 
@@ -149,20 +152,22 @@ Then boot the built app once and check the log (`~/Library/Logs/MacNativeGames/t
 `1.1.1 60 FPS patch`, the version-correct patch lines, and the expected output/scene lines; the menu
 and a save load must work end to end.
 
-## 6. Known state (as of 2026-11-10)
+## 6. Known state (as of 2026-11-11)
 
-- Branch `totk-1.1.1-port` @ `4bd74707`, tag `port-1.1.1` (both pushed; the tag is the recovery source
-  for `expected-v1.1.1.json` and every anchor listed in §3).
+- Branch `totk-1.1.1-port` @ `728247b2` (or newer), tag `port-1.1.1` (both pushed; the tag is the
+  recovery source for `expected-v1.1.1.json` and every anchor listed in §3).
 - The `upstream` remote was missing from this clone's config on 2026-11-10 and was restored
   (`https://github.com/ly05010419/MacNativeGames.git`) — §3 checks for it first.
 - The port pieces were once half-committed (2026-11-10, commit `4bd74707` fixed it): a checkout of the
   branch alone must be complete. The verification loop in §3 proves it.
-- Upstream's tip was `adc0e199` on 2026-11-10 (it added an Ocarina of Time port, ~1,500 files, plus VR,
+- Upstream's tip was `95594873` on 2026-11-11 (it added an Ocarina of Time port, ~1,500 files, plus VR,
   iOS and shader-list changes). The §3 re-apply was validated against that tip: every port file,
   including `build_app.py`, applies clean (3-way) and `games/totk/build/totk-native-v111` compiles
   with 0 errors. A raw `git diff upstream/main..HEAD` will show ~1,700 files and ~400k deletions right
   after the checkout — that is only upstream's new content the branch does not have yet; after the
   re-apply the *port* diff is the ~20 files of the table.
+- SSAO is now upstream's to begin with (2026-11-10+ ungated `SETTINGS_SSAO`), so `settings_panel.h`
+  needs no port hunk — resolve any conflict by taking upstream's version of the file.
 - 1.1.1 has the 1.2.1-gated features too (scene-follows-canvas, native 4K, SSAO row) — see
   `games/totk/docs/v1.1.1-port.md` §8. The 1.4.3-only features (effects page, VR, 5K, the >60 FPS fade
   fix, AA-method row, pt-BR, HDR frontend, frame-step) are analyzed and deliberately not ported, with
