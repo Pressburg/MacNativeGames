@@ -178,3 +178,11 @@ and a save load must work end to end.
   the evidence, in the same section.
 - The 1.2.1 app (`~/Documents/Nintendo/Tears of the Kingdom 1.2.1.app`) is built from this branch too
   and behaves as upstream 1.2.1 (all v111 code is preprocessor-excluded from it).
+
+## 7. Green tiles / MetalFX (debugging note)
+
+If the title screen shows green square tiles on the glow lines, the shared profile has MetalFX on:
+`~/Library/Application Support/MacNativeGames/TOTK/picture-mode.txt` = `metalfx` and
+`graphics-output.txt` = `1`. Set them to `off` / `0` (or flip the panel's resolution row to 1080p).
+The game's own upscale (`TOTK_MFX_UPSCALE=0`) is the clean path; Apple's `MTLFXSpatialScaler` tiles on
+thin saturated glow lines. The settings live in the profile, not the repo, so a rebuild does not reset them.
