@@ -35,7 +35,7 @@ from pathlib import Path
 import struct
 import sys
 
-VERSIONS = ('v0', 'v121', 'v143')
+VERSIONS = ('v0', 'v111', 'v121', 'v143')
 APP_VERSIONS = VERSIONS + ('botw160', 'botw190')   # the folders an app's RomFS can sit in (VERSIONS: Tears of the Kingdom only)
 CHUNK = 8 << 20
 # Windows/macOS droppings that mod managers (TKMM, Ryujinx output folders) leave in a RomFS tree: never a game file.

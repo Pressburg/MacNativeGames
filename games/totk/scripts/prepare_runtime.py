@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'third_party/d2r'))
 from relr import decode_relr
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--version', choices=('v0','v121','v143','botw160','botw190','dkb','pkp'), default='v0')
+parser.add_argument('--version', choices=('v0','v111','v121','v143','botw160','botw190','dkb','pkp'), default='v0')
 version = parser.parse_args().version
 OUT = ROOT / f'build/game-data/{version}'
 OUT.mkdir(parents=True, exist_ok=True)
@@ -28,6 +28,8 @@ if version == 'botw190':   # Breath of the Wild 1.9.0 (docs/botw-v1.9.0-port.md)
     assert report['module_file_sha256']['extracted/botw190/exefs/main'] == 'f6f0b20bb1f2b67d164c24871cd473147eef1d285f12e7bd492e3126c6022e27', 'Unsupported BotW 1.9.0 main image'
 if version == 'v143':
     assert report['module_file_sha256']['extracted/v143/exefs/main'] == 'e84a90d551fed0824b4b74933b9c6d043c458521363a7cea58b2faca1822dc9e', 'Unsupported 1.4.3 main image'
+if version == 'v111':
+    assert report['module_file_sha256']['extracted/v111/exefs/main'] == 'd16accd1edbe15f94bb60bc0b45270a89e293aadc3d24ea833ba9c1ac47783c6', 'Unsupported 1.1.1 main image'
 modules = []
 # main first (the loader patches modules[0]), then the subsdk modules this title ships, sdk last (games/wonder's rule)
 names = ['main', *(f'subsdk{i}' for i in range(10) if (ROOT / f'rewritten/{version}/subsdk{i}.patched.bin').is_file()), 'sdk']
