@@ -166,6 +166,10 @@ and a save load must work end to end.
   with 0 errors. A raw `git diff upstream/main..HEAD` will show ~1,700 files and ~400k deletions right
   after the checkout — that is only upstream's new content the branch does not have yet; after the
   re-apply the *port* diff is the ~20 files of the table.
+- The port's `Makefile` v111 rule must list `runtime/input_prompts.m` (upstream added it for
+  `totk_prompt_icons.m`'s `runtime_prompt_snapshot`); the "copy upstream's current `*-v121` rule
+  verbatim" instruction in §3 covers it, but a hand-edited rule that forgets it fails at link time
+  (`ld: symbol(s) not found`).
 - SSAO is now upstream's to begin with (2026-11-10+ ungated `SETTINGS_SSAO`), so `settings_panel.h`
   needs no port hunk — resolve any conflict by taking upstream's version of the file.
 - 1.1.1 has the 1.2.1-gated features too (scene-follows-canvas, native 4K, SSAO row) — see
