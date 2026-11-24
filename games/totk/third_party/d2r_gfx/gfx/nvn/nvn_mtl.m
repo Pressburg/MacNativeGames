@@ -18840,6 +18840,7 @@ static void vbuf_log(NvShader *vs, NvShader *fs, const p_draw *dw, const p_draw_
     [seen addObject:line]; logged++;
     MLOG("[vbuf] %s", line.UTF8String);
 }
+static int enc_lock1_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_ENC_LOCK1"); v = !(e && !atoi(e)); if (!v) MLOG("TOTK_ENC_LOCK1=0: each stage's argument block takes the registry lock itself"); } return v; }
 static void bind_vertex_streams(id<MTL4RenderCommandEncoder> en, NvShader *vs) {
     uint16_t mask=vertex_streams_on()?vertex_stream_mask(vs):UINT16_MAX;
     uint64_t bound=0,omitted=0;
@@ -20065,12 +20066,15 @@ frz_plain:;
     bind_vertex_streams((id<MTL4RenderCommandEncoder>)en,pr->sh[0]);
     vbuf_log(pr->sh[0], pr->sh[1], dw, di);
     if (g_lay.active) enc_r_vbuf(en, LAY_BUF_INDEX, lay_gpu(g_lay_probe_neg == 1 ? 0 : g_lay.cur - g_lay.base));   // TOTK: this draw's layer within the layered pass
+    /* TOTK_ENC_LOCK1 (HopeSuffers 18a6a4ab, default on; =0 off): wrap both shader stages under one re-entrant registry_lock(). */
+    int lock1 = enc_lock1_on(); if (lock1) registry_lock();
     if (pr->sh[0]) encode_args(en, pr->sh[0], 0, 1);
 #if defined(GAME_OOT) && TARGET_OS_OSX
     if (pr->sh[1] && g_vr_collapse_draw) pr->sh[1]->ab_pass = 0;   // its material block may be our copy (oot_vr_whole.inc)
 #endif
     if (pr->sh[0] && (g_vr_collapse_draw||g_vr_ui_ray_draw)) pr->sh[0]->ab_pass = 0;   // Per-draw immutable palette/HUD bytes cannot leak to the next draw.
     if (pr->sh[1]) encode_args(en, pr->sh[1], 1, 0);
+    if (lock1) registry_unlock();
     // 参数绑定在登记表锁内捕获实际资源；资格判断到绑定期间有版本变化，则在任何GPU draw前切开重试。
     // Parameter binding captures the actual resources under the registry lock; if the version changed between the eligibility check and the binding, split and retry before any GPU draw.
     if (g_rt_range_active && (g_pass.reg_gen != g_reg_gen || g_pass.ser_gen != g_ser_gen || g_pass.range_dirty != nvn_dirty_now())) { rp_end(); draw(dw, di); return; }
