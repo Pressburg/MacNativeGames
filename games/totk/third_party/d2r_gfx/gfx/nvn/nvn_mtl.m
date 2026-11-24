@@ -241,7 +241,10 @@ static int g_present_latency = 1;
 static uint64_t g_pq_done;
 static uint64_t g_pq_read;
 static id<MTLResidencySet> g_res;
-static int g_res_dirty;
+/* Pending changes to g_res: RES_DIRTY_ADD must commit before any command buffer that uses the resource;
+   RES_DIRTY_REMOVE may wait until end of submission (TOTK_RES_BATCH, BennettStaley 76c69018). */
+enum { RES_DIRTY_ADD = 1, RES_DIRTY_REMOVE = 2 };
+static _Atomic int g_res_dirty;
 static id<MTLSharedEvent> g_ev;
 /* TOTK containment (TOTK_GPU_NOCOMMIT=1): after full-game runs kernel-panicked macOS in the GPU driver, the replay can
    encode everything but submit nothing. Completion handlers run at once so fences, queries and pacing still advance;
@@ -477,6 +480,8 @@ static struct { uint64_t adds, removes, live_bytes; _Atomic uint64_t alive, aliv
 static char g_alloc_track_key;
 static NSMapTable *g_res_site_of;   // resource (weak key) -> NSNumber source line
 static uint64_t g_res_live_bytes;
+static uint64_t g_res_commits, g_res_commits_async;   // under g_res_mu
+static _Atomic uint64_t g_res_commit_calls, g_res_removal_waits;
 /* A texture (or a view of one) placed on a heap is resident through the heap: the heap is the registered allocation
    (nvn_stor_alias.h), so the texture is neither added nor removed on its own. */
 static int res_on_heap(id r) {
@@ -551,7 +556,7 @@ static void res_add_at(id<MTLResource> r, int site) { @autoreleasepool {
             objc_setAssociatedObject(r, &g_alloc_track_key, tr, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     }
-    g_res_dirty = 1;
+    atomic_fetch_or(&g_res_dirty, RES_DIRTY_ADD);
     pthread_mutex_unlock(&g_res_mu);
 } }
 #define res_add(r) res_add_at((r), __LINE__)
@@ -565,7 +570,7 @@ static void res_remove_body(id<MTLResource> r) {
         g_res_live_bytes -= sz < g_res_live_bytes ? sz : g_res_live_bytes;
         [g_res_objects removeObject:r]; [g_res_site_of removeObjectForKey:r];
     }
-    g_res_dirty = 1;
+    atomic_fetch_or(&g_res_dirty, RES_DIRTY_REMOVE);
     pthread_mutex_unlock(&g_res_mu);
 }
 static int g_res_remove_no_pool; // GPU probe negative control only
@@ -659,11 +664,26 @@ static void res_check(id r, const char *what, int reg) {
              t ? [NSString stringWithFormat:@" 格式 %lu %lux%lu 类型 %lu 用途 %#lx", (unsigned long)t.pixelFormat, (unsigned long)t.width, (unsigned long)t.height, (unsigned long)t.textureType, (unsigned long)t.usage].UTF8String : ""); }
 }
 static void stor_alias_collect(void);
+/* TOTK_RES_BATCH (default 1, TOTK_RES_BATCH=0 restores synchronous commits): res_commit skips lock/budget/ObjC
+   unless an allocation was added; removal-only changes commit on a background queue once per submission. */
+static int res_batch_on(void) {
+    static _Atomic int v = -1; int r = atomic_load_explicit(&v, memory_order_relaxed);
+    if (r < 0) {
+        const char *e = getenv("TOTK_RES_BATCH"); r = !(e && !strcmp(e, "0")); int expect = -1;
+        if (atomic_compare_exchange_strong(&v, &expect, r))
+            MLOG("TOTK_RES_BATCH=%d: %s", r, r ? "the residency set is committed before a command buffer only when allocations joined it; removals are committed off the replay thread once per submission" : "every residency change is committed before the next command buffer (old)");
+    }
+    return r;
+}
 static void res_commit(void) {
     stor_alias_collect();   // alias heaps whose last texture was freed leave the set in this commit
+    atomic_fetch_add_explicit(&g_res_commit_calls, 1, memory_order_relaxed);
+    int need = res_batch_on() ? RES_DIRTY_ADD : (RES_DIRTY_ADD | RES_DIRTY_REMOVE);
+    int d = atomic_load_explicit(&g_res_dirty, memory_order_acquire);
+    if (!(d & need)) { if (d) atomic_fetch_add_explicit(&g_res_removal_waits, 1, memory_order_relaxed); return; }
     gpu_budget_check("提交驻留集");
     pthread_mutex_lock(&g_res_mu);
-    if (g_res_dirty) { if (!nogpu()) [g_res commit]; g_res_dirty = 0; }
+    if (atomic_load_explicit(&g_res_dirty, memory_order_relaxed) & need) { if (!nogpu()) [g_res commit]; atomic_store(&g_res_dirty, 0); g_res_commits++; }
 #if NVN_FILE_WIRE
     fwire_t *fw = g_fwire; size_t nfw = g_nfwire; g_fwire = NULL; g_nfwire = g_cfwire = 0;   // the file pages wired for the changes just committed
 #endif
@@ -672,6 +692,35 @@ static void res_commit(void) {
     for (size_t i = 0; i < nfw; i++) munlock(fw[i].p, fw[i].n);   // the commit holds them for the GPU now; a range mapped anew meanwhile fails, harmlessly
     free(fw);
 #endif
+}
+static void res_commit_sub_end(uint64_t frame) {
+    res_commit();
+    static _Atomic int queued;
+    if (res_batch_on() && (atomic_load_explicit(&g_res_dirty, memory_order_acquire) & RES_DIRTY_REMOVE) && !atomic_exchange(&queued, 1)) {
+        static dispatch_queue_t q; static dispatch_once_t once;
+        dispatch_once(&once, ^{ q = dispatch_queue_create("totk.residency-commit", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0)); });
+        dispatch_async(q, ^{ @autoreleasepool {
+            atomic_store(&queued, 0);   // before the commit so a removal arriving during it queues another pass
+            pthread_mutex_lock(&g_res_mu);
+            if (atomic_load_explicit(&g_res_dirty, memory_order_relaxed)) { if (!nogpu()) [g_res commit]; atomic_store(&g_res_dirty, 0); g_res_commits_async++; }
+#if NVN_FILE_WIRE
+            fwire_t *fw = g_fwire; size_t nfw = g_nfwire; g_fwire = NULL; g_nfwire = g_cfwire = 0;
+#endif
+            pthread_mutex_unlock(&g_res_mu);
+#if NVN_FILE_WIRE
+            for (size_t i = 0; i < nfw; i++) munlock(fw[i].p, fw[i].n);
+            free(fw);
+#endif
+        } });
+    }
+    static uint64_t f0 = UINT64_MAX, c0, a0, w0, k0;
+    if (f0 == UINT64_MAX || frame < f0) { f0 = frame; pthread_mutex_lock(&g_res_mu); c0 = g_res_commits; a0 = g_res_commits_async; pthread_mutex_unlock(&g_res_mu); w0 = atomic_load(&g_res_removal_waits); k0 = atomic_load(&g_res_commit_calls); return; }
+    if (frame < f0 + 600) return;
+    pthread_mutex_lock(&g_res_mu); uint64_t c = g_res_commits, a = g_res_commits_async; unsigned long nobj = (unsigned long)g_res_objects.count; pthread_mutex_unlock(&g_res_mu);
+    uint64_t w = atomic_load(&g_res_removal_waits), k = atomic_load(&g_res_commit_calls); double nf = (double)(frame - f0);
+    MLOG("residency frames %llu-%llu (TOTK_RES_BATCH=%d): %.2f commits/frame before command buffers, %.2f removal-only commits/frame in the background, %.2f commit points/frame clean or deferring removals (of %.2f checks/frame), %lu objects",
+         (unsigned long long)f0, (unsigned long long)frame, res_batch_on(), (double)(c - c0) / nf, (double)(a - a0) / nf, (double)(w - w0) / nf, (double)(k - k0) / nf, nobj);
+    f0 = frame; c0 = c; a0 = a; w0 = w; k0 = k;
 }
 
 #include "nvn_deferred_queue.h"
@@ -3668,7 +3717,7 @@ uint64_t mtl_sub_commit(void) {
     pt_finish(g_cb, o, gpu_f, fence);
     dp_time_finish(o, fence);
     ms_time_finish(o, fence);
-    res_commit();
+    res_commit_sub_end(gpu_f);
     uint64_t tlid = totk_tl_on() ? totk_tl_commit_id() : 0;
     if (tlid) { totk_tl_at_frame(TL_COMMIT, clock_gettime_nsec_np(CLOCK_UPTIME_RAW), gpu_f, tlid, 1); totk_tl_at_frame(TL_FENCE, clock_gettime_nsec_np(CLOCK_UPTIME_RAW), gpu_f, tlid, fence);
         [o addFeedbackHandler:^(id<MTL4CommitFeedback> fb) { totk_tl_at_frame(TL_GPU, (uint64_t)(fb.GPUStartTime * 1e9), gpu_f, tlid, (uint64_t)(fb.GPUEndTime * 1e9)); }]; }
