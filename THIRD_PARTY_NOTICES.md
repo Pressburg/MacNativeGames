@@ -36,6 +36,7 @@ Code in this repository that comes from other projects keeps its license; the li
 | `zeldaVR/streamer/basaltvr.patch` (our changes to the streamer, with lines of its source as diff context) | [BasaltVR](https://github.com/frenchbaguetteman/BasaltVR) at `4c46172` | MIT | `zeldaVR/streamer/LICENSE.BasaltVR` |
 | `windows_games/ra2/third_party/x86recomp` (x86 to arm64 recompiler and Win32 runtime) | [x86recomp](https://github.com/JTM-rootstorm/x86recomp) at `1c90fe3`, with WinNativeGames' changes (`UPSTREAM.md` lists them) | MIT | `windows_games/ra2/third_party/x86recomp/LICENSE` |
 | Scene HDR math and grading in `games/totk/third_party/d2r_gfx/gfx/nvn/totk_hdr_compose.h` | [RenoDX TOTK](https://github.com/Souperman9/renodx/tree/40d764d88719ab06c8e46139b5454e7dafc8cbcc/src/games/totk) | MIT | `games/totk/third_party/d2r_gfx/gfx/nvn/LICENSE.renodx` |
+| in `games/totk/third_party/d2r_gfx/gfx/nvn/nvn_mtl.m`: skip `mtl_gpu_addr` on `NVN_RB_CBUF` when `upd_shadow` or `usnap_find` resolves the GPU address | [manosaba-ios](https://github.com/iceorange-dev/manosaba-ios/commit/80713081) (Batch 191), adapted | MIT | upstream LICENSE (`iceorange-dev/manosaba-ios`) |
 
 Fetched or linked at build time (not in this repository):
 

@@ -14756,13 +14756,20 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
                       if (st_on) { const usnap_t *sc2 = usnap_find(u->addr, u->size ? u->size : 1); if (sc2 && ce->gpu == sc2->gpu + (u->addr - sc2->lo)) snaptrace(sh ? sh->key : NULL, reg, u->addr, u->size, sc2->cpu + (u->addr - sc2->lo)); } }
                     continue; } } else g_cbc_misses++;
             }
-            void *mb; uint64_t mo, gpu;
-            if (!u || !u->addr || !mtl_gpu_addr(u->addr, 1, &mb, &mo, &gpu)) { RED_ONCE(16, "阶段 %d cb%d 没有绑定 uniform 缓冲", nvn_stage, reg); continue; }
-            use_rec("buf", u->addr, u->size, 0, NULL);
+            void *mb = NULL; uint64_t mo = 0, gpu = 0;
+            if (!u || !u->addr) { RED_ONCE(16, "阶段 %d cb%d 没有绑定 uniform 缓冲", nvn_stage, reg); continue; }
+            const int ui_mat = (nvn_stage == 0 && reg == 0 && ui_mat_on());
             uint64_t ren = g_nupd ? upd_shadow(u->addr, win) : 0;   // TOTK: renamed inline updates (see upd_shadow), only the bytes the shader reads
+            const usnap_t *sc = (ren || ui_mat || usnap_skipped(u->size, 0) || usnap_key_skipped(sh ? sh->key : NULL, reg)) ? NULL : usnap_find(u->addr, u->size ? u->size : 1);
+            /* Pool lookup (iceorange-dev/manosaba-ios 80713081, MIT): skip mtl_gpu_addr when upd_shadow or usnap_find already
+               supplies the GPU address, unless passdump / watch / VR HUD ray / UI patch / res_check needs mb/mo. */
+            const int need_pool = (!ren && !sc) || bl || g_res_check_on || watch_fs_prefix() ||
+                                  (g_vr_ui_ray_draw && nvn_stage == 0 && reg == 0 && (u->size == 560 || u->size == 128));
+            if (need_pool && !mtl_gpu_addr(u->addr, 1, &mb, &mo, &gpu)) { RED_ONCE(16, "阶段 %d cb%d 没有绑定 uniform 缓冲", nvn_stage, reg); continue; }
+            use_rec("buf", u->addr, u->size, 0, NULL);
             if (ren) { gpu = ren; if (nvn_stage == 0 && reg == 0 && ui_mat_on()) RED_ONCE(58, "UI 矩阵修补读的是内存，跳过了含内联更新的 uniform 副本"); }
-            else if (nvn_stage == 0 && reg == 0 && ui_mat_on()) { uint64_t pg = ui_mat_patch(u, mb, mo); if (pg) gpu = pg; }
-            else { const usnap_t *sc = usnap_skipped(u->size, 0) || usnap_key_skipped(sh ? sh->key : NULL, reg) ? NULL : usnap_find(u->addr, u->size ? u->size : 1); if (sc) { gpu = sc->gpu + (u->addr - sc->lo); snaptrace(sh ? sh->key : NULL, reg, u->addr, u->size, sc->cpu + (u->addr - sc->lo)); } }   // TOTK: contents as of the submit call
+            else if (ui_mat) { uint64_t pg = ui_mat_patch(u, mb, mo); if (pg) gpu = pg; }
+            else if (sc) { gpu = sc->gpu + (u->addr - sc->lo); snaptrace(sh ? sh->key : NULL, reg, u->addr, u->size, sc->cpu + (u->addr - sc->lo)); }   // TOTK: contents as of the submit call
             if ((race_on() || rdf_on()) && !ren && !usnap_find(u->addr, u->size ? u->size : 1)) gpu_read_input(u->addr, u->size, sh ? sh->key : NULL, 'u');
             if (watch_fs_prefix()) watch_cb(sh ? sh->key : NULL, nvn_stage, reg, u->addr, u->size, gpu, (__bridge id<MTLBuffer>)mb, ren ? "renamed" : usnap_find(u->addr, u->size ? u->size : 1) ? "snapshot" : "live");
 #if defined(GAME_OOT) && TARGET_OS_OSX
