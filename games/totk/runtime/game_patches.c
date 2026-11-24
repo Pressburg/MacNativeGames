@@ -80,6 +80,9 @@ void runtime_frame_step_update(uint64_t now_ns) {
     double dt = (double)(now_ns - last_present_ns) * 1e-9;
     last_present_ns = now_ns;
     if (dt > 0.25 || dt < 0.001) { frame_sample_count = frame_sample_next = 0; return; }
+    /* Restore the 1/120 s floor (lakuch de8d30c7): sub-8.33 ms transients can reach the guest when frames wake early
+       after a present, and TOTK crashed on them even under a 120 fps ceiling. No effect at locked 60 fps (16.67 ms). */
+    if (dt < 1.0 / 120.0) dt = 1.0 / 120.0;
     if (dt > 1.0 / 15.0) dt = 1.0 / 15.0;
     frame_samples[frame_sample_next++ % 5] = dt;
     if (frame_sample_count < 5) frame_sample_count++;
@@ -782,6 +785,43 @@ static void patch_pool_offset(Module *m) {
             (unsigned long long)words[0].site, (unsigned long long)words[1].site);
 }
 
+/* A start-up race (LENG-ZECHEN 83c08b27, mapped to 1.1.1): about one boot in four or five crashes reading address 0
+   from [x0, #0x2b0] in a per-frame update (1.1.1 main+0x7f9da8, called from 0x7ece5c) before another thread initializes
+   that pointer. The caller ignores the return value; a veneer in text padding (+640) branches to the epilogue while
+   the pointer is NULL and runs the instruction as shipped once set. TOTK_BOOT_RACE_GUARD=0 disables it. */
+static void patch_boot_race(Module *m) {
+#if defined(TOTK_GAME_V121)
+    static const uint64_t sites[] = {0x8e0570};
+    const uint64_t epilogue = 0x8e0ab4; const uint32_t frame_pop = 0x912283ff;   /* add sp, sp, #0x8a0 */
+#elif defined(TOTK_GAME_V111)
+    static const uint64_t sites[] = {0x7f9dd8};   /* 1.1.1: +0x7f9da8 (+0x30 ldr x22, [x0, #0x2b0]; epilogue +0x7fa320) */
+    const uint64_t epilogue = 0x7fa320; const uint32_t frame_pop = 0x9122c3ff;   /* add sp, sp, #0x8b0 */
+#else
+    static const uint64_t sites[] = {0x84dc74};
+    const uint64_t epilogue = 0x84e26c; const uint32_t frame_pop = 0x9122c3ff;   /* add sp, sp, #0x8b0 */
+#endif
+    const uint64_t site = sites[0];
+    const char *e = getenv("TOTK_BOOT_RACE_GUARD");   /* the Mac only: an iPhone / iPad build ships the code already patched */
+    if (!CODE_PATCHED_AT_BUILD && e && !strcmp(e, "0")) { fprintf(stderr, "[totk] %s start-up race guard: as shipped (TOTK_BOOT_RACE_GUARD=0)\n", TOTK_GAME_VERSION); return; }
+    const uint64_t stub = ((m->text_end + 15) & ~15ULL) + 640;   /* after the cursor veneers (+512..+592) */
+    if (stub + 16 > ((m->text_end + 0xfff) & ~0xfffULL)) runtime_fail("start-up race guard layout");
+    if (!CODE_PATCHED_AT_BUILD) {
+        uint32_t w, x; memcpy(&w, m->base + site, 4); memcpy(&x, m->base + epilogue, 4);
+        if (w != 0xf9415816 || x != frame_pop) {   /* ldr x22, [x0, #0x2b0]; add sp, sp, #<frame> */
+            fprintf(stderr, "[totk] start-up race guard: found %08x / %08x\n", w, x);
+            runtime_fail("start-up race guard: original instruction mismatch");
+        }
+        for (unsigned i = 0; i < 16; i++) if (m->base[stub + i]) runtime_fail("start-up race guard padding not empty");
+    }
+    put_word(m, stub,      0xf9415816, "start-up race guard");   /* ldr x22, [x0, #0x2b0]: the replaced instruction */
+    put_word(m, stub + 4,  0xb4000056, "start-up race guard");   /* cbz x22, +8 */
+    put_word(m, stub + 8,  branch_to(stub + 8, site + 4), "start-up race guard");    /* set: on as shipped */
+    put_word(m, stub + 12, branch_to(stub + 12, epilogue), "start-up race guard");   /* empty: return */
+    put_word(m, site, branch_to(site, stub), "start-up race guard");
+    fprintf(stderr, "[totk] %s start-up race guard: per-frame update at main+%#llx guarded, veneer +%#llx\n",
+            TOTK_GAME_VERSION, (unsigned long long)(site - 0x30), (unsigned long long)stub);
+}
+
 void runtime_game_patches(Module *m) {
     runtime_survey_init(m);
     const size_t n = sizeof fps60_sites / sizeof fps60_sites[0];
@@ -813,6 +853,7 @@ void runtime_game_patches(Module *m) {
 #if defined(TOTK_GAME_V121) || defined(TOTK_GAME_V111)
     patch_cursor_speed(m);
 #endif
+    patch_boot_race(m);
     patch_pool_offset(m);
     patch_trap(m);
 #if defined(TOTK_GAME_V121)
