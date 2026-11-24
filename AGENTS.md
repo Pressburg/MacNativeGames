@@ -184,7 +184,7 @@ and a save load must work end to end.
 
 ## 6. Known state (as of 2026-11-24)
 
-- Branch `totk-1.1.1-port`, tag `port-1.1.1` (both pushed; prior pre-rebase tip archived at `port-1.1.1-prev` / `c8cf37b3`; `port-1.1.1` is the recovery source for `expected-v1.1.1.json` and every anchor listed in §3).
+- Branch `totk-1.1.1-port`, tag `port-1.1.1` (both pushed; prior pre-rebase tip archived at `port-1.1.1-prev` / `695afd88`; `port-1.1.1` is the recovery source for `expected-v1.1.1.json` and every anchor listed in §3).
 - Upstream baseline is now `97eafb63` (+334 commits over prior `71a5da8c`). Full upstream delta, 71 open PRs, 178 active forks, external projects (`iceorange-dev/manosaba-ios`, `seedds/nxnative`), integrated winners, and SKIP reasons are logged in `games/totk/docs/upstream-watch.md`.
 - The `upstream` remote (`https://github.com/ly05010419/MacNativeGames.git`) is configured locally alongside `fork` (`Pressburg/MacNativeGames.git`).
 - Note on `games/totk/zeldaVR`: `97eafb63` added `zeldaVR/gfx/vr_depth_stereo.{h,m}` referenced by `nvn_mtl.m`; `games/totk/zeldaVR` must remain a real untracked directory synced from repo-root `zeldaVR/` whenever updating upstream (`cp -R`).

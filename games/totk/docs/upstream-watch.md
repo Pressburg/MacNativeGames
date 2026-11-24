@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-24
 **Recorded upstream baseline:** `97eafb63` (`upstream/main`, +334 commits since previous baseline `71a5da8c`)
-**Port branch:** `totk-1.1.1-port` (`fork` = `Pressburg/MacNativeGames`, tag `port-1.1.1`; prior pre-rebase tip archived at tag `port-1.1.1-prev` / `c8cf37b3`)
+**Port branch:** `totk-1.1.1-port` (`fork` = `Pressburg/MacNativeGames`, tag `port-1.1.1`; prior pre-rebase tip archived at tag `port-1.1.1-prev` / `695afd88`)
 
 Everything marked **EVALUATED** below has been audited against `upstream/main` (`97eafb63`) and `games/totk/rewritten/v111/main.patched.bin` and must not be re-researched from scratch on future runs unless new commits arrive.
 
@@ -80,7 +80,8 @@ Everything marked **EVALUATED** below has been audited against `upstream/main` (
 | `BennettStaley` `e9b8eafa` | `nvn_dirty_check`: single `find()` lookup returning `-1` untracked or `0/1` dirty status in `tex_mtl_p`. | **ADAPT** (`d483f47d`) | Upstream already had `BLK_SHIFT`/`r->blk` chunk skipping + `FIND_HASH`, so adapted to reuse `pages_since` (zero extra per-MB allocation + `#if NVN_DIRTY_SPLIT` fallback) + added `chunk_check` test in `probe-dirty-race` (`24/24` pass). |
 | `HopeSuffers` `7c344d78` | `mtl_pool_add` retry | **SKIP** | Already present verbatim in `upstream/main` (`nvn_mtl.m:1324-1330`). |
 | `HopeSuffers` `9af845fa` | `TOTK_BORDER_PLAN` | **SKIP** | Superseded by `upstream/main`'s `NvBorderKeyCache` (`nvn_mtl.m:10293`). |
-| `HopeSuffers` `126a880d` | `tex_mtl_p` / ARC retain/release trim | **SKIP** | Already superseded in `upstream/main` (`tex_fast_rid`, `prog_get_p`, `pso_get_p`, `tex_by_id_p`). |
+| `HopeSuffers` `126a880d`, `b5df2c2f`, `291d407a`, `751b3b5e`, `b32b7032` | `tex_mtl_p`/ARC trim (`rp_begin_ex`), `TOTK_USNAP_BATCH`, `TOTK_SPLIT_EARLY`, 8-byte `nvn_hmap`, `TOTK_FLATTEN_FAST` | **SKIP** | Already superseded/present in `upstream/main` (`97eafb63`: `nvn_mtl.m`, `nvn_hmap.h:24`, `hle_nvn.c:1248`). |
+| `HopeSuffers` `3b82c516` (`archive/perf/gamehot`) | `TOTK_GAMEHOT` (1.2.1): host-side hinted RSDB `Row *find_first(Query *)` veneer | **SKIP** | High-surface unmerged guest C++ vtable hook (~670 lines, mapped only for `1.2.1` `main+0x7f3688`, requires full `1.1.1` disassembly & struct layout verification). |
 | `BennettStaley` `1e1c8b20` | `ea_bind_loop` optimization | **SKIP** | High diff churn in `encode_args`; mostly subsumed by upstream `arg_epoch` + `tex_slots` caching. |
 | `tvc97` `03233fa5` / `3a5d46f6` | `g_pso_guess` drain + Oct-21 `nxnative` perf bundle | **SKIP** | `SignalToAddress -2` (`threads.c`), `nvn_depth_clear.h`, `0006` texel fix, and `pso_pend_reclaim` are already upstream; remaining full-pass color lazy-clear had serial-vs-memory aliasing risk and `nvnQueueFinish` skipping queued presents carried swapchain-pool UAF risk. |
 | `lakuch` `5017066c` | Default `TOTK_ASYNC_REPLAY=1` on Mac | **SKIP** | Upstream evaluated 2026-11-03 after Oct 24 and kept `TOTK_ASYNC_REPLAY` off by default (`hle_nvn.c:2688`). |
@@ -94,6 +95,7 @@ Everything marked **EVALUATED** below has been audited against `upstream/main` (
 | Project / Commit | What it does | Verdict | Reason |
 | --- | --- | --- | --- |
 | `iceorange-dev/manosaba-ios` `80713081` (MIT, Batch 191) | Skip `mtl_gpu_addr` pool lookup on `NVN_RB_CBUF` when `upd_shadow` or `usnap_find` already resolved the GPU address (`encode_args`). Measured **-1% replay instructions** and **5.19–5.25 -> 5.04–5.13 ms/frame** on Great Sky Island M5. | **ADAPT** (`0feb4aa1`) | Ported with safety guards keeping `mtl_gpu_addr` active whenever `ui_mat`, `bl` (`passdump`/`CBDUMP`), `g_res_check_on`, `watch_fs_prefix()`, or `g_vr_ui_ray_draw` needs `mb`/`mo`; MIT attribution added to `THIRD_PARTY_NOTICES.md`. |
+| `iceorange-dev/manosaba-ios` `8cbad37e`, `e683f231`, `abf039b4` (Batches 188, 194, 195) | Memoryless depth targets (`manosaba` only), dynamic-res shrine diagnostic (`305`), split `mtl/present.m` translation unit + `DM_FRAME_STEP=vsync` (`321`) | **SKIP** | Explicitly leaves TOTK unchanged (TOTK loads/samples depth); `321` (`vsync` frame step) is `manosaba`/`DM_FRAME_STEP` specific; `264` refactor is internal file layout only. |
 | `seedds/nxnative` (`4f4d23a8`, `3a7e53d3`, `e49e4814`, `c1bd080a`, `a359f9e6`, `5ccb82ad`, `0b09b66d`, `685d2aec`, `973f2d73`) & `ChiefSZ13/nxnative` | Lock-free `tid_ser` passdump, `fb_view`, `sh_lists_make`, `vs_streams`, `t_pc.w`, raw pointers, Switch 2 mesh/depth experiments | **SKIP** | Core wins (`stor_sampling_view`, `texture_slots`/`guard_idx`, `vertex_stream_mask`, `pool_tls_find`, `prog_get_p`/`pso_get_p`/`tex_fast_rid`, `registry_lock` in `encode_args`, `0006`/`0007`) are already superseded upstream in `97eafb63`; remainder are NS2/experimental. |
 
 ---
