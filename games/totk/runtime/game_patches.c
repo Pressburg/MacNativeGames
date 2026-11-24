@@ -135,6 +135,14 @@ typedef struct { uint64_t fmul, store; unsigned r, f; int off; int pair; } Cloth
 static const ClothInline cloth_inline[3] = {{0x82192c, 0x821928, 0, 8, 0x124, 0}, {0x822a64, 0x822a40, 0, 8, 0x124, 0},
                                             {0x83182c, 0x831830, 1, 0, 0x134, 0}};
 static const uint64_t cloth_call = 0x8222f0, cloth_update = 0x89822c;
+#elif defined(TOTK_GAME_V111)
+/* 1.1.1: the same three inline places and the one call as 1.2.1, in 1.1.1's own main (mapped with
+   map_version_sites.py --from v121 --to v111, then read out of the instruction words: the shape is the 1/30 constant
+   load, the str of the factor, the fmul). The two str sites here hold the factor at sp+0x144 (1.2.1 used +0x104), so
+   the offset is not 1.2.1's. */
+static const ClothInline cloth_inline[3] = {{0xa53780, 0xa5377c, 0, 8, 0x144, 0}, {0xa546bc, 0xa54698, 0, 8, 0x144, 0},
+                                            {0xa68f10, 0xa68f14, 1, 0, 0x134, 0}};
+static const uint64_t cloth_call = 0xa54174, cloth_update = 0x7d92d4;
 #else
 static const ClothInline cloth_inline[3] = {{0x7b5988, 0x7b598c, 0, 8, -0x40, 1}, {0x7b6b28, 0x7b6b2c, 0, 8, -0x40, 1},
                                             {0x7f5ec4, 0x7f5ed0, 1, 0, 0x114, 0}};
@@ -271,12 +279,13 @@ __attribute__((unused)) static int overlay_present(unsigned w, unsigned h, int s
     else snprintf(path, sizeof path, "%s/%ux%u/manifest.tsv", dir ? dir : "extracted/" TOTK_GAME_DIR "/romfs-patches-out", w, h);
     return access(path, R_OK) == 0;
 }
-/* The scene follows the canvas (after PR #1467) only where it was made for: 1.2.1 on the Mac, TOTK_RENDER_RES unset,
-   and an app that carries the scene overlays (build_app.py makes them for 1.2.1 and 1.4.3). 1.0.0 shares this
-   file but gets none, and an app from before (only update_runtime.py since) has none: both keep the game's own 1600x900
-   scene and the plain overlays, as before, instead of stopping at a missing overlay (runtime/romfs.c). */
+/* The scene follows the canvas (after PR #1467) only where it was made for: 1.2.1 and 1.1.1 on the Mac,
+   TOTK_RENDER_RES unset, and an app that carries the scene overlays (build_app.py makes them for 1.1.1, 1.2.1 and
+   1.4.3). 1.0.0 shares this file but gets none, and an app from before (only update_runtime.py since) has none:
+   both keep the game's own 1600x900 scene and the plain overlays, as before, instead of stopping at a missing
+   overlay (runtime/romfs.c). */
 static int scene_follows_canvas(void) {
-#if TARGET_OS_OSX && defined(TOTK_GAME_V121)
+#if TARGET_OS_OSX && (defined(TOTK_GAME_V121) || defined(TOTK_GAME_V111))
     static int decided, on;
     if (!decided) {
         const char *e = getenv("TOTK_RENDER_RES");
@@ -592,8 +601,8 @@ static void patch_slowmo_bounce(Module *m) {
             TOTK_GAME_VERSION, (unsigned long long)stub);
 }
 
-#if defined(TOTK_GAME_V121)
-/* 1.2.1 cursors and aim that moved a fixed step per frame (#285). Both updates already read the game's 30 Hz frame ratio
+#if defined(TOTK_GAME_V121) || defined(TOTK_GAME_V111)
+/* Cursors and aim that moved a fixed step per frame (#285). Both updates already read the game's 30 Hz frame ratio
    (1 at 30 fps, 0.5 at 60, 0.25 at 120) for their smoothing but leave it out of the step itself, so the map cursor and
    the vertical Ultrahand aim ran twice as fast at 60 fps and four times as fast at 120 as at the shipping 30 fps. Each
    veneer multiplies the step by that ratio, which gives the shipping speed at any frame rate. The veneers sit in main's
@@ -608,7 +617,9 @@ static void patch_slowmo_bounce(Module *m) {
    Aim gyro, vertical (main+0x1d484e4, used by Recall's aim): the same update copies the gyro's angular velocity each
    frame (main+0xd184cc) and subtracts velocity * sensitivity from its vertical gyro accumulator once per frame (fmul
    s3, s9, s0); the horizontal gyro uses the change of attitude and was right. The veneer multiplies by [x20 + 8] too.
-   TOTK_MAP_CURSOR_REALTIME=0 / TOTK_ULTRAHAND_REALTIME=0 leave each one as shipped. */
+   1.1.1 has the same three places in its own main (map_version_sites.py --from v121 --to v111): the map cursor at
+   main+0xf54028, the vertical aim at main+0x1d50954 and the vertical aim gyro at main+0x1d500d4, every original word
+   unchanged. TOTK_MAP_CURSOR_REALTIME=0 / TOTK_ULTRAHAND_REALTIME=0 leave each one as shipped. */
 static void cursor_veneer(Module *m, const char *what, const char *env, uint64_t site, uint32_t original,
                           unsigned at, const uint32_t *code, unsigned n) {
     const char *e = getenv(env);
@@ -633,20 +644,25 @@ static void patch_cursor_speed(Module *m) {
                                    0xbd400930,    /* ldr s16, [x9, #8]: its 30 Hz ratio */
                                    0x1e300800,    /* fmul s0, s0, s16 */
                                    0xbd400361};   /* ldr s1, [x27]: the replaced instruction */
-    cursor_veneer(m, "map cursor", "TOTK_MAP_CURSOR_REALTIME", 0xec3d9c, 0xbd400361, 512, map, 4);
+#if defined(TOTK_GAME_V121)
+    static const uint64_t cursor_map = 0xec3d9c, cursor_aim = 0x1d48d64, cursor_gyro = 0x1d484e4;   /* 1.2.1's sites */
+#elif defined(TOTK_GAME_V111)
+    static const uint64_t cursor_map = 0xf54028, cursor_aim = 0x1d50954, cursor_gyro = 0x1d500d4;   /* 1.1.1's (mapped from 1.2.1's) */
+#endif
+    cursor_veneer(m, "map cursor", "TOTK_MAP_CURSOR_REALTIME", cursor_map, 0xbd400361, 512, map, 4);
     static const uint32_t aim[] = {0x1e2a198c,    /* fdiv s12, s12, s10: the replaced instruction */
                                    0xbd400a90,    /* ldr s16, [x20, #8]: the update's 30 Hz ratio */
                                    0x1e30098c};   /* fmul s12, s12, s16 */
-    cursor_veneer(m, "Ultrahand vertical aim", "TOTK_ULTRAHAND_REALTIME", 0x1d48d64, 0x1e2a198c, 544, aim, 3);
+    cursor_veneer(m, "Ultrahand vertical aim", "TOTK_ULTRAHAND_REALTIME", cursor_aim, 0x1e2a198c, 544, aim, 3);
     static const uint32_t gyro[] = {0x1e200923,   /* fmul s3, s9, s0: the replaced instruction (velocity * sensitivity) */
                                     0xbd400a90,   /* ldr s16, [x20, #8]: the update's 30 Hz ratio */
                                     0x1e300863};  /* fmul s3, s3, s16 */
-    cursor_veneer(m, "aim gyro, vertical", "TOTK_ULTRAHAND_REALTIME", 0x1d484e4, 0x1e200923, 576, gyro, 3);
+    cursor_veneer(m, "aim gyro, vertical", "TOTK_ULTRAHAND_REALTIME", cursor_gyro, 0x1e200923, 576, gyro, 3);
 }
 #endif
 
-#if defined(TOTK_GAME_V121)
-/* Benchmark camera for 1.2.1 (survey sessions only; see game_patches_v143.c for the block on the data page at +0x100).
+#if defined(TOTK_GAME_V121) || defined(TOTK_GAME_V111)
+/* Benchmark camera (survey sessions only; see game_patches_v143.c for the block on the data page at +0x100).
    1.2.1's look-at camera update stores eye, target and up into the camera in x20 at main+0xcb4390..0xcb4464 and then
    calls its virtual matrix update with x1 = camera+8 (main+0xcb4468..0xcb4474), which reads those fields; the add at
    main+0xcb4468 branches to a stub that, while the block is active, writes the benchmark camera over them and the FOV
@@ -656,14 +672,21 @@ static void patch_cursor_speed(Module *m) {
    after it returns. (UltraCam's time-of-day hook no longer finds its function in 1.2.1, so it sets no time there.)
    The stubs sit after the rewriter's patch area (main+file_size up to the data page, executable like the rest of that
    area and never written by the rewriter): main's text padding is taken by the aspect stubs (+0), the bounce veneer
-   (+128) and the cloth/hair clock (+160). */
+   (+128) and the cloth/hair clock (+160).
+   1.1.1 has the same three sites in its own main (map_version_sites.py --from v121 --to v111): the camera at
+   main+0xce3994, the HUD layer at main+0x884e08 and the time-of-day hook at main+0xbc6b08, every original word
+   unchanged. */
 static void patch_bench_cam(Module *m) {
 #if TARGET_OS_IPHONE
     (void)m;
 #else
     const char *survey = getenv("TOTK_SURVEY");
     if (!survey || strcmp(survey, "1")) return;
+#if defined(TOTK_GAME_V121)
     static const uint64_t sites[] = {0xcb4468, 0x977808, 0xab92cc};   /* camera, HUD layer, time of day */
+#elif defined(TOTK_GAME_V111)
+    static const uint64_t sites[] = {0xce3994, 0x884e08, 0xbc6b08};   /* 1.1.1's (mapped from 1.2.1's; every original word unchanged) */
+#endif
     const uint64_t site = sites[0], hsite = sites[1], csite = sites[2], block = 0x100;
     uint64_t data = (m->file_size + 0x3fff) & ~0x3fffULL, stub = (m->file_size + 15) & ~15ULL;   /* the patch area's tail */
     static const uint32_t body[] = {
@@ -696,15 +719,15 @@ static void patch_bench_cam(Module *m) {
                          branch_to(cstub + 36, csite + 4)};
     uint32_t got;
     memcpy(&got, m->base + csite, 4);
-    if (got != 0xa9ba7bfd) runtime_fail("1.2.1 benchmark time of day: the game code does not match");
+    if (got != 0xa9ba7bfd) runtime_fail("benchmark time of day: the game code does not match");
     memcpy(&got, m->base + site, 4);
-    if (got != 0x91002281) runtime_fail("1.2.1 benchmark camera: the camera code does not match");
+    if (got != 0x91002281) runtime_fail("benchmark camera: the camera code does not match");
     memcpy(&got, m->base + hsite, 4);
-    if (got != 0x6db82beb) runtime_fail("1.2.1 benchmark HUD hiding: the game code does not match");
+    if (got != 0x6db82beb) runtime_fail("benchmark HUD hiding: the game code does not match");
     if (stub < m->patch_off || cstub + sizeof cwords > data || data + block + 256 > m->size)
-        runtime_fail("1.2.1 benchmark camera layout");
+        runtime_fail("benchmark camera layout");
     for (unsigned i = 0; i < sizeof words + sizeof twords + sizeof cwords; i++)
-        if (m->base[stub + i]) runtime_fail("1.2.1 benchmark camera padding not empty");
+        if (m->base[stub + i]) runtime_fail("benchmark camera padding not empty");
     memset(m->base + data + block, 0, 256);
     memcpy(m->base + cstub, cwords, sizeof cwords);
     uint32_t cjump = branch_to(csite, cstub);
@@ -716,7 +739,8 @@ static void patch_bench_cam(Module *m) {
     jump = branch_to(hsite, tstub);
     memcpy(m->base + hsite, &jump, 4);
     runtime_bench_cam = m->base + data + block;
-    fprintf(stderr, "[totk] 1.2.1 benchmark camera: look-at and FOV override at main+%#llx, HUD hiding at main+%#llx, stubs +%#llx\n",
+    fprintf(stderr, "[totk] %s benchmark camera: look-at and FOV override at main+%#llx, HUD hiding at main+%#llx, stubs +%#llx\n",
+           TOTK_GAME_VERSION,
             (unsigned long long)site, (unsigned long long)hsite, (unsigned long long)stub);
 #endif
 }
@@ -735,6 +759,8 @@ static void patch_bench_cam(Module *m) {
 static void patch_pool_offset(Module *m) {
 #if defined(TOTK_GAME_V121)
     static const uint64_t sites[] = {0xad43f0, 0xad440c};
+#elif defined(TOTK_GAME_V111)
+    static const uint64_t sites[] = {0xae5260, 0xae527c};   /* 1.1.1's (mapped from 1.2.1's; every original word unchanged) */
 #else
     static const uint64_t sites[] = {0xa7d320, 0xa7d33c};
 #endif
@@ -784,18 +810,28 @@ void runtime_game_patches(Module *m) {
     patch_render_res(m);
     patch_output_res(m);
     patch_slowmo_bounce(m);
-#if defined(TOTK_GAME_V121)
+#if defined(TOTK_GAME_V121) || defined(TOTK_GAME_V111)
     patch_cursor_speed(m);
 #endif
     patch_pool_offset(m);
     patch_trap(m);
 #if defined(TOTK_GAME_V121)
     { static const uint64_t sites[] = {0xcb4b10, 0x12521cc, 0x19b36f0, 0x1ecdf68};   /* camera x2, viewport x2 (aspect_patch.h) */
-      aspect_install(m, "1.2.1", sites, 4, 2, (m->text_end + 15) & ~15ULL, 0,   /* no free padding for Vert+ stubs */
+      aspect_install(m, TOTK_GAME_VERSION, sites, 4, 2, (m->text_end + 15) & ~15ULL, 0,   /* no free padding for Vert+ stubs */
+                     (m->file_size + 0x3fff) & ~0x3fffULL); }
+    patch_bench_cam(m);
+#elif defined(TOTK_GAME_V111)
+    /* Other picture shapes (aspect_patch.h): 1.1.1 has the same four sites in its own main
+       (map_version_sites.py --from v121 --to v111; every original word unchanged) and the same text padding layout as
+       1.2.1: the aspect stubs take the first 128 bytes, the bounce veneer +128 and the cloth/hair clock +160, so there
+       is none left for Vert+ stubs (1.4.3 only). The two viewport sites are byte-identical copies of one routine in
+       both versions, so 1.1.1's pair is 1.2.1's in order. */
+    { static const uint64_t sites[] = {0xce403c, 0x12624f4, 0x19c013c, 0x1ed6710};   /* camera x2, viewport x2 */
+      aspect_install(m, TOTK_GAME_VERSION, sites, 4, 2, (m->text_end + 15) & ~15ULL, 0,   /* no free padding for Vert+ stubs */
                      (m->file_size + 0x3fff) & ~0x3fffULL); }
     patch_bench_cam(m);
 #else
-    if (aspect_requested()) runtime_fail("TOTK_ASPECT: only 1.2.1 and 1.4.3 so far");
+    if (aspect_requested()) runtime_fail("TOTK_ASPECT: only 1.1.1, 1.2.1 and 1.4.3 so far");
 #endif
     if (!fps60_enabled()) {
         fprintf(stderr, "[totk] 60 FPS patch off (TOTK_FPS60=0): shipping present interval range 2..3\n");

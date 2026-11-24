@@ -92,6 +92,7 @@ game-data-$(1): build/game-data/$(1)/runtime-tables.bin build/game-data/$(1)/rew
 endef
 $(eval $(call GAME_DATA,v0,analysis/phase12-validation.json))
 $(eval $(call GAME_DATA,v121,analysis/v121-port/phase12-validation.json))
+$(eval $(call GAME_DATA,v111,analysis/v111-port/phase12-validation.json))
 $(eval $(call GAME_DATA,v143,analysis/v143-port/phase12-validation.json))
 $(eval $(call GAME_DATA,botw160,analysis/botw160-port/phase12-validation.json))
 $(eval $(call GAME_DATA,botw190,analysis/botw190-port/phase12-validation.json))
@@ -412,7 +413,13 @@ probe-world-survey: build/world-survey-probe
 	@TOTK_PROBE_NEGATIVE=1 build/world-survey-probe > analysis/world-survey-negative.log 2>&1; test $$? -eq 1
 	@rg 'FAIL: position actually changed' analysis/world-survey-negative.log
 
-# Isolated 1.2.1 build (the same SDK modules as 1.0.0); never replace the validated v0 executable or its game data.
+# Isolated 1.1.1 build (this fork's port: docs/v1.1.1-port.md); never replace the validated v0 executable or its game data.
+.PHONY: runtime-v111 binary-v111
+build/totk-native-v111: $(wildcard runtime/*.[ch] runtime/*.m runtime/*.S) $(GFX_OBJECTS) Makefile runtime/game_info.plist app/launcher.m runtime/cloud_save.m
+	xcrun clang -std=c11 $(NATIVE_OPT) $(GAME_INFO) -g -Wall -Wextra -Werror -Wno-deprecated-declarations -Ithird_party/d2r_gfx/gfx/nvn/include -DTOTK_GAME_V111=1 -Ibuild -I$(OPUS_PREFIX)/include/opus -I$(VPX_PREFIX)/include runtime/loader.c runtime/game_data.c runtime/game_patches.c runtime/world_survey.c runtime/game_slot.c runtime/services.c runtime/romfs.c runtime/threads.c runtime/gate.S runtime/hle_stack.S runtime/hle_stack.c runtime/thread_enter.S runtime/gfx_bridge.c runtime/frontend.m runtime/account.c runtime/input.c runtime/hid_feedback.c runtime/motion_fusion.c runtime/autoload.c runtime/gamepad.m runtime/input_prompts.m runtime/gamepad_feedback.m runtime/gfx_probe.c runtime/vpool_probe.m runtime/gpu_path_probe.m runtime/memory_probe.c runtime/shared_font.c runtime/ipc.c runtime/audio_renderer.c runtime/audio_mixer.c runtime/audio_reverb.c runtime/audio_effects.c runtime/fs_host.c runtime/opus_codec.c runtime/movie_host.c runtime/time_host.c runtime/applet_host.c runtime/swkbd_host.c app/launcher.m runtime/cloud_save.m $(GFX_OBJECTS) $(OPUS_PREFIX)/lib/libopus.a $(VPX_PREFIX)/lib/libvpx.a -framework Metal -framework MetalFX -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework CoreText -framework UniformTypeIdentifiers -fobjc-arc -framework Cocoa -framework CoreVideo -framework CoreFoundation -framework AudioToolbox -framework GameController -framework CoreHaptics -framework IOKit -framework IOSurface -o "$@"
+binary-v111: build/totk-native-v111 build/pso_manifest.tsv build/pso_title.tsv
+runtime-v111: binary-v111 game-data-v111
+
 .PHONY: runtime-v121 binary-v121
 build/totk-native-v121: $(wildcard runtime/*.[ch] runtime/*.m runtime/*.S) $(GFX_OBJECTS) Makefile runtime/game_info.plist app/launcher.m runtime/cloud_save.m
 	xcrun clang -std=c11 $(NATIVE_OPT) $(GAME_INFO) -g -Wall -Wextra -Werror -Wno-deprecated-declarations -Ithird_party/d2r_gfx/gfx/nvn/include -DTOTK_GAME_V121=1 -Ibuild -I$(OPUS_PREFIX)/include/opus -I$(VPX_PREFIX)/include runtime/loader.c runtime/game_data.c runtime/game_patches.c runtime/world_survey.c runtime/game_slot.c runtime/services.c runtime/romfs.c runtime/threads.c runtime/gate.S runtime/hle_stack.S runtime/hle_stack.c runtime/thread_enter.S runtime/gfx_bridge.c runtime/frontend.m runtime/account.c runtime/input.c runtime/hid_feedback.c runtime/motion_fusion.c runtime/autoload.c runtime/gamepad.m runtime/input_prompts.m runtime/gamepad_feedback.m runtime/gfx_probe.c runtime/vpool_probe.m runtime/gpu_path_probe.m runtime/memory_probe.c runtime/shared_font.c runtime/ipc.c runtime/audio_renderer.c runtime/audio_mixer.c runtime/audio_reverb.c runtime/audio_effects.c runtime/fs_host.c runtime/opus_codec.c runtime/movie_host.c runtime/time_host.c runtime/applet_host.c runtime/swkbd_host.c app/launcher.m runtime/cloud_save.m $(GFX_OBJECTS) $(OPUS_PREFIX)/lib/libopus.a $(VPX_PREFIX)/lib/libvpx.a -framework Metal -framework MetalFX -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework CoreText -framework UniformTypeIdentifiers -fobjc-arc -framework Cocoa -framework CoreVideo -framework CoreFoundation -framework AudioToolbox -framework GameController -framework CoreHaptics -framework IOKit -framework IOSurface -o "$@"

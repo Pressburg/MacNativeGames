@@ -28,3 +28,6 @@ games/totk/tools/totk_xlate/bin/
 games/totk/scripts/shader_inventory/obj/
 games/totk/scripts/shader_inventory/bin/
 ultracode.md
+
+# this fork builds zeldaVR as a real directory (macOS clang cannot compile upstream's symlink)
+games/totk/zeldaVR/
