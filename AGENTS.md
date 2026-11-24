@@ -182,34 +182,18 @@ Then boot the built app once and check the log (`~/Library/Logs/MacNativeGames/t
 `1.1.1 60 FPS patch`, the version-correct patch lines, and the expected output/scene lines; the menu
 and a save load must work end to end.
 
-## 6. Known state (as of 2026-11-15)
+## 6. Known state (as of 2026-11-24)
 
-- Branch `totk-1.1.1-port` @ `728247b2` (or newer), tag `port-1.1.1` (both pushed; the tag is the
-  recovery source for `expected-v1.1.1.json` and every anchor listed in §3).
-- The `upstream` remote was missing from this clone's config on 2026-11-10 and was restored
-  (`https://github.com/ly05010419/MacNativeGames.git`) — §3 checks for it first.
-- The port pieces were once half-committed (2026-11-10, commit `4bd74707` fixed it): a checkout of the
-  branch alone must be complete. The verification loop in §3 proves it.
-- Upstream's tip was `71a5da8c` on 2026-11-15 (249 commits after `95594873`: new game ports — Ocarina of
-  Time, Worldend Syndrome, Skyward Sword HD, Metroid Dread — plus TOTK-relevant shared-gfx fixes and 257
-  new TOTK shader-list rows). The 2026-11-15 update re-merged the port onto it; the §3 recipe was
-  corrected (patch must be generated against the base commit, some sections are upstream reversion
-  artifacts and must be dropped). Validated on the tip: v111 compiles 0 errors; game_version_test,
-  patch_sites, test_exclusive_windows (128), verify_loader (4000 calls), verify_cloth_clock (140),
-  probe-fs (304,469 files) all pass.
-- The port's `Makefile` v111 rule must list `runtime/input_prompts.m` (upstream added it for
-  `totk_prompt_icons.m`'s `runtime_prompt_snapshot`); the "copy upstream's current `*-v121` rule
-  verbatim" instruction in §3 covers it, but a hand-edited rule that forgets it fails at link time
-  (`ld: symbol(s) not found`).
-- SSAO is now upstream's to begin with (2026-11-10+ ungated `SETTINGS_SSAO`), so `settings_panel.h`
-  needs no port hunk — resolve any conflict by taking upstream's version of the file.
-- 1.1.1 has the 1.2.1-gated features too (scene-follows-canvas, native 4K, SSAO row) — see
-  `games/totk/docs/v1.1.1-port.md` §8. The 1.4.3-only features (effects page, VR, 5K, the >60 FPS fade
-  fix, AA-method row, pt-BR, HDR frontend, frame-step) are analyzed and deliberately not ported, with
-  the evidence, in the same section.
-- Only the 1.1.1 app exists (`~/Documents/Nintendo/Tears of the Kingdom 1.1.1.app`); the 1.2.1 app and
-  its v121 data dirs were deleted 2026-11-11 to free space. All v111 code is preprocessor-excluded from
-  the v0/v121/v143 builds, so they behave as upstream.
+- Branch `totk-1.1.1-port`, tag `port-1.1.1` (both pushed; prior pre-rebase tip archived at `port-1.1.1-prev` / `c8cf37b3`; `port-1.1.1` is the recovery source for `expected-v1.1.1.json` and every anchor listed in §3).
+- Upstream baseline is now `97eafb63` (+334 commits over prior `71a5da8c`). Full upstream delta, 71 open PRs, 178 active forks, external projects (`iceorange-dev/manosaba-ios`, `seedds/nxnative`), integrated winners, and SKIP reasons are logged in `games/totk/docs/upstream-watch.md`.
+- The `upstream` remote (`https://github.com/ly05010419/MacNativeGames.git`) is configured locally alongside `fork` (`Pressburg/MacNativeGames.git`).
+- Note on `games/totk/zeldaVR`: `97eafb63` added `zeldaVR/gfx/vr_depth_stereo.{h,m}` referenced by `nvn_mtl.m`; `games/totk/zeldaVR` must remain a real untracked directory synced from repo-root `zeldaVR/` whenever updating upstream (`cp -R`).
+- `v111` port specifics preserved across rebase:
+  - `Makefile`: `v111` rule lists `runtime/input_prompts.m` and `$(eval $(call GAME_DATA,v111,...))`.
+  - `runtime/game_patches.c`: includes `1.1.1` start-up race guard (`main+0x7f9dd8`, veneer `+0x2b282d0`, ported from `LENG-ZECHEN 83c08b27`) and `1/120 s` real-time frame-step floor (`lakuch de8d30c7`), protected by `patch_sites.py` (54 sites).
+  - Shared `gfx/nvn/*` wins integrated cleanly on top of `97eafb63`: `PR #485` async/cached `totk_taa.m` scaler (`1eb7bfa4`), `20 µs` render-stream spin cap (`e884aa41` adapted via `!GAME_NS2 && !TOTK_GAME_V143`), `TOTK_RS_POOL` batched autorelease pool (`d4bb9982`), `TOTK_RES_BATCH` async removal residency commits (`76c69018`), `reduced` `pk->owned` guard (`c10eda9c`), `TOTK_ENC_LOCK1` single draw registry lock (`18a6a4ab`), `TOTK_PSO_MEMO2` per-program LRU (`51d5e36e`), `upd_shadow`/`usnap` pool lookup skip (`iceorange-dev/manosaba-ios` `80713081`, MIT, credited in `THIRD_PARTY_NOTICES.md`), and single-lookup `nvn_dirty_check` (`e9b8eafa` + `chunk_check` test in `probe-dirty-race`).
+  - SSAO, scene-follows-canvas, and native 4K remain active for `1.1.1`; `games/totk/docs/v1.1.1-port.md` §8 documents intentionally skipped 1.4.3-only features.
+- Built `/Users/admin/Documents/Nintendo/Tears of the Kingdom 1.1.1.app` with `--native-4k` (27,408 pipelines for `applegpu_g17g`, 0 errors) and boot/save-load verified end-to-end into Eldin Canyon with player settings intact (`1440p`, `lock-60`, `graphics-taa=1`, `picture-mode=off`, MetalFX off). Only `make PYTHON=.venv/bin/python check-c` + `v111` §5 verifiers + `probe-{fs,dirty-race,pool-index,metal-semantics,texture-auto-layout}` are gated; full `make check` still hits upstream's unrelated `games.py`/other-game catalog assertions because the fork adds `v111` and replaces the tracked `games/totk/zeldaVR` symlink.
 
 ## 7. Green tiles / MetalFX (debugging note)
 
