@@ -128,12 +128,20 @@ static void rs_apply(id<MTL4RenderCommandEncoder> *enc, id<MTL4ArgumentTable> *v
         default: MDIE("render stream invalid operation %llu", (unsigned long long)p->op);
     }
 }
+/* B: whether a packet after the current one (q->read) is already published (HopeSuffers d4bb9982). */
+static inline int rs_more(nvn_encode_fifo *q) {
+    if (q->cached_published - q->read > 1) return 1;
+    q->cached_published = atomic_load_explicit(&q->published, memory_order_acquire);
+    return q->cached_published - q->read > 1;
+}
 static void *rs_worker(void *unused) {
     (void)unused;
     pthread_setname_np("TOTK encode stage");
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
     id<MTL4RenderCommandEncoder> enc = nil; id<MTL4ArgumentTable> vt = nil, ft = nil;
     uint64_t idle_since = 0, busy_since = 0;
+    int batch;   /* TOTK_RS_POOL (default on; =0 one autorelease pool per packet as before) */
+    { const char *e = getenv("TOTK_RS_POOL"); batch = e && !atoi(e) ? 1 : 256; if (batch == 1) MLOG("TOTK_RS_POOL=0: the encode stage drains an autorelease pool after every packet"); }
     for (;;) {
         const nvn_encode_packet *p = nvn_encode_fifo_peek(&g_rs_fifo);
         if (!p) {
@@ -149,7 +157,17 @@ static void *rs_worker(void *unused) {
         }
         if (!busy_since) busy_since = rs_now();
         idle_since = 0;
-        @autoreleasepool { rs_apply(&enc, &vt, &ft, p); }
+        /* TOTK_RS_POOL: drain one autorelease pool per run of up to `batch` already-published packets; consume the
+           run's final packet only after the pool drains so rs_sync observes all autoreleased driver objects freed. */
+        @autoreleasepool {
+            for (int n = 1;; n++) {
+                rs_apply(&enc, &vt, &ft, p);
+                if (n >= batch || !rs_more(&g_rs_fifo)) break;
+                nvn_encode_fifo_consume(&g_rs_fifo);
+                __builtin_arm_sev();
+                p = nvn_encode_fifo_peek(&g_rs_fifo);
+            }
+        }
         nvn_encode_fifo_consume(&g_rs_fifo);
         __builtin_arm_sev();
     }
