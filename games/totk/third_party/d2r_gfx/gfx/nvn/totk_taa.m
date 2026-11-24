@@ -48,6 +48,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "totk_taa.h"
 #include <TargetConditionals.h>
 
@@ -107,11 +108,28 @@ static struct {
     /* Each size change retires the scaler and seven textures. Keep every one alive for the in-flight frames. */
     struct { id obj; uint64_t frame; } old[TAA_OLD * 8]; int nold;
 } g;
-static void keep_old(id obj) {   // released (and dropped from the residency set) TAA_OLD frames later, when the GPU is done with it
+/* Key 5 1:1 scaler cache and background builder (PR #485, extended for reactive mask and depth history): dynamic resolution
+   changes rebuild scalers asynchronously on a background queue instead of stalling the submit thread. */
+#define TAA_CACHE 4
+static struct {
+    id<MTL4FXTemporalScaler> sc; id<MTLTexture> out, mv, react, dh[2];
+    NSUInteger w, h; MTLPixelFormat fmt;
+} g_cache[TAA_CACHE];
+static int g_ncache;   // submit thread only
+static int in_scaler_cache(id obj) {
+    for (int i = 0; i < g_ncache; i++) {
+        if (g_cache[i].sc == obj || g_cache[i].out == obj || g_cache[i].mv == obj ||
+            g_cache[i].react == obj || g_cache[i].dh[0] == obj || g_cache[i].dh[1] == obj) return 1;
+    }
+    return 0;
+}
+static void keep_old(id obj) {   // released (and dropped from the residency set when not held in g_cache) TAA_OLD frames later
     if (!obj) return;
     int dropped = 0;
     for (int i = 0; i < g.nold; i++) if (g.frame - g.old[i].frame >= TAA_OLD) {
-        if ([g.old[i].obj conformsToProtocol:@protocol(MTLAllocation)]) { [g.rs removeAllocation:g.old[i].obj]; dropped = 1; }
+        if (!in_scaler_cache(g.old[i].obj) && [g.old[i].obj conformsToProtocol:@protocol(MTLAllocation)]) {
+            [g.rs removeAllocation:g.old[i].obj]; dropped = 1;
+        }
         g.old[i] = g.old[--g.nold]; i--;
     }
     if (dropped) [g.rs commit];
@@ -268,37 +286,91 @@ static MTLTextureUsage react_usage(id<MTLFXTemporalScalerBase> sc) {   // what M
     return sc.reactiveTextureUsage;
 #pragma clang diagnostic pop
 }
-static int ensure_scaler(id<MTLTexture> src) {
-    if (g.sc && g.w == src.width && g.h == src.height && g.fmt == src.pixelFormat) return 1;
-    if (![MTLFXTemporalScalerDescriptor supportsMetal4FX:g.dev]) { g.failed = 1; TLOG("this GPU has no Metal 4 MetalFX temporal scaler"); return 0; }
+static os_unfair_lock g_pend_lock = OS_UNFAIR_LOCK_INIT;
+static struct { int busy, failed; NSUInteger w, h; MTLPixelFormat fmt; id<MTL4FXTemporalScaler> done; double ms; } g_pend;   // g_pend_lock
+static uint64_t g_wait_frames;
+static double taa_now_ms(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e6; }
+static int taa_sync(void) { static int s = -1; if (s < 0) { const char *e = getenv("TOTK_TAA_SYNC"); s = e && strcmp(e, "0"); } return s; }
+static id<MTL4FXTemporalScaler> new_scaler(NSUInteger w, NSUInteger h, MTLPixelFormat fmt) {   // any thread: g.dev and g.comp do not change after setup
     MTLFXTemporalScalerDescriptor *d = [MTLFXTemporalScalerDescriptor new];
     /* The output is RGBA16Float, not the scene's RG11B10Float: written back into 11 / 11 / 10 bits, red and blue rounded
        differently from frame to frame (the hazy distance flickered purple: red / blue flicker 3.9 / 4.0 against green 3.0;
        with RGBA16Float 3.1 / 2.9 against 2.6, below the game's own 3.8 / 3.2 / 3.0 without anti-aliasing). */
-    MTLPixelFormat of = MTLPixelFormatRGBA16Float;
-    d.colorTextureFormat = src.pixelFormat; d.outputTextureFormat = of;
+    d.colorTextureFormat = fmt; d.outputTextureFormat = MTLPixelFormatRGBA16Float;
     d.depthTextureFormat = MTLPixelFormatDepth32Float; d.motionTextureFormat = MTLPixelFormatRG16Float;
-    d.inputWidth = d.outputWidth = src.width; d.inputHeight = d.outputHeight = src.height;
+    d.inputWidth = d.outputWidth = w; d.inputHeight = d.outputHeight = h;
     /* No auto exposure: MetalFX's own estimate jumped now and then (after a few minutes of play, worst at dusk and at
        night), and the game's tone mapping turned that into a different tint of the whole frame for a moment: the sky
        went from (28, 98, 122) to (46, 83, 76) between two captures and hazy rocks seemed to glow. With the exposure
        left at 1 the same five minutes stayed smooth and flickered less than without anti-aliasing. */
     d.autoExposureEnabled = NO;
     d.reactiveMaskTextureEnabled = YES; d.reactiveMaskTextureFormat = MTLPixelFormatR16Float;   // all zero with TOTK_TAA_REACTIVE=0
-    id<MTL4FXTemporalScaler> sc = [d newTemporalScalerWithDevice:g.dev compiler:g.comp];
-    if (!sc) { g.retry_at = g.frame + 300; TLOG("temporal scaler %lux%lu (format %lu) not created; trying again in 300 frames", (unsigned long)src.width, (unsigned long)src.height, (unsigned long)src.pixelFormat); return 0; }
-    keep_old(g.out); keep_old(g.mv); keep_old(g.react); keep_old(g.dh[0]); keep_old(g.dh[1]);
-    keep_old(g.sc);
+    return [d newTemporalScalerWithDevice:g.dev compiler:g.comp];
+}
+static int ensure_scaler(id<MTLTexture> src) {
+    NSUInteger w = src.width, h = src.height; MTLPixelFormat f = src.pixelFormat;
+    if (g.sc && g.w == w && g.h == h && g.fmt == f) return 1;
+    if (![MTLFXTemporalScalerDescriptor supportsMetal4FX:g.dev]) { g.failed = 1; TLOG("this GPU has no Metal 4 MetalFX temporal scaler"); return 0; }
+    for (int i = 0; i < g_ncache; i++) if (g_cache[i].w == w && g_cache[i].h == h && g_cache[i].fmt == f) {
+        g.sc = g_cache[i].sc; g.out = g_cache[i].out; g.mv = g_cache[i].mv; g.react = g_cache[i].react;
+        g.dh[0] = g_cache[i].dh[0]; g.dh[1] = g_cache[i].dh[1]; g.w = w; g.h = h; g.fmt = f; g.prev_ok = 0;
+        [g.rs addAllocation:g.out]; [g.rs addAllocation:g.mv]; [g.rs addAllocation:g.react];
+        [g.rs addAllocation:g.dh[0]]; [g.rs addAllocation:g.dh[1]]; [g.rs commit];
+        TLOG("temporal scaler %lux%lu again (kept from before, no build)", (unsigned long)w, (unsigned long)h);
+        return 1;
+    }
+    id<MTL4FXTemporalScaler> sc = nil; double ms = 0;
+    if (taa_sync()) {
+        double t0 = taa_now_ms(); sc = new_scaler(w, h, f); ms = taa_now_ms() - t0;
+        if (!sc) { g.retry_at = g.frame + 300; TLOG("temporal scaler %lux%lu (format %lu) not created after %.1f ms; trying again in 300 frames", (unsigned long)w, (unsigned long)h, (unsigned long)f, ms); return 0; }
+    } else {
+        int start = 0, failed = 0;
+        os_unfair_lock_lock(&g_pend_lock);
+        int match = g_pend.w == w && g_pend.h == h && g_pend.fmt == f;
+        if (g_pend.done && match) { sc = g_pend.done; g_pend.done = nil; ms = g_pend.ms; }
+        else if (g_pend.failed && match) { g_pend.failed = 0; failed = 1; ms = g_pend.ms; }
+        else if (!g_pend.busy) { g_pend.done = nil; g_pend.failed = 0; g_pend.busy = 1; g_pend.w = w; g_pend.h = h; g_pend.fmt = f; start = 1; }
+        os_unfair_lock_unlock(&g_pend_lock);   // busy with another size: that build ends first, the next frame starts this one
+        if (failed) { g.retry_at = g.frame + 300; TLOG("temporal scaler %lux%lu (format %lu) not created after %.1f ms in the background; trying again in 300 frames", (unsigned long)w, (unsigned long)h, (unsigned long)f, ms); return 0; }
+        if (start) {
+            static dispatch_queue_t q; if (!q) q = dispatch_queue_create("totk.taa.scaler", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+            dispatch_async(q, ^{
+                double t0 = taa_now_ms(); id<MTL4FXTemporalScaler> s = new_scaler(w, h, f); double dt = taa_now_ms() - t0;
+                os_unfair_lock_lock(&g_pend_lock); g_pend.busy = 0; g_pend.done = s; g_pend.failed = !s; g_pend.ms = dt; os_unfair_lock_unlock(&g_pend_lock);
+            });
+            TLOG("temporal scaler %lux%lu: building in the background, frames go without anti-aliasing meanwhile", (unsigned long)w, (unsigned long)h);
+        }
+        if (!sc) { g_wait_frames++; return 0; }
+    }
     MTLTextureUsage ru = react_usage(sc);
-    g.out = mk(of, src.width, src.height, sc.outputTextureUsage | MTLTextureUsageShaderRead);
-    g.mv = mk(MTLPixelFormatRG16Float, src.width, src.height, sc.motionTextureUsage | MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
-    g.react = mk(MTLPixelFormatR16Float, src.width, src.height, ru | MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
-    for (int i = 0; i < 2; i++) g.dh[i] = mk(MTLPixelFormatR32Float, src.width, src.height, MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
+    id<MTLTexture> out = mk(MTLPixelFormatRGBA16Float, w, h, sc.outputTextureUsage | MTLTextureUsageShaderRead);
+    id<MTLTexture> mv = mk(MTLPixelFormatRG16Float, w, h, sc.motionTextureUsage | MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
+    id<MTLTexture> react = mk(MTLPixelFormatR16Float, w, h, ru | MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
+    id<MTLTexture> dh0 = mk(MTLPixelFormatR32Float, w, h, MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
+    id<MTLTexture> dh1 = mk(MTLPixelFormatR32Float, w, h, MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
     [g.rs commit];
-    if (!g.out || !g.mv || !g.react || !g.dh[0] || !g.dh[1]) { g.sc = nil; g.retry_at = g.frame + 300; TLOG("textures for %lux%lu not created; trying again in 300 frames", (unsigned long)src.width, (unsigned long)src.height); return 0; }
-    g.sc = sc; g.w = src.width; g.h = src.height; g.fmt = src.pixelFormat; g.prev_ok = 0;
-    TLOG("temporal scaler %lux%lu, scene format %lu, output RGBA16Float, 1:1 with jitter, reactive mask from depth %s", (unsigned long)g.w, (unsigned long)g.h, (unsigned long)g.fmt,
-         reactive_on() ? "on" : "off (TOTK_TAA_REACTIVE=0)");
+    if (!out || !mv || !react || !dh0 || !dh1) {
+        if (out) [g.rs removeAllocation:out]; if (mv) [g.rs removeAllocation:mv]; if (react) [g.rs removeAllocation:react];
+        if (dh0) [g.rs removeAllocation:dh0]; if (dh1) [g.rs removeAllocation:dh1];
+        [g.rs commit]; g.retry_at = g.frame + 300;
+        TLOG("textures for %lux%lu not created; trying again in 300 frames", (unsigned long)w, (unsigned long)h); return 0;
+    }
+    if (g_ncache == TAA_CACHE) {   // the oldest size goes; the GPU may still read it for TAA_OLD frames
+        id<MTL4FXTemporalScaler> old_sc = g_cache[0].sc;
+        id<MTLTexture> old_out = g_cache[0].out, old_mv = g_cache[0].mv, old_react = g_cache[0].react, old_dh0 = g_cache[0].dh[0], old_dh1 = g_cache[0].dh[1];
+        for (int i = 1; i < TAA_CACHE; i++) g_cache[i - 1] = g_cache[i];   // plain assignment: ARC keeps the counts right
+        g_cache[TAA_CACHE - 1].sc = nil; g_cache[TAA_CACHE - 1].out = nil; g_cache[TAA_CACHE - 1].mv = nil;
+        g_cache[TAA_CACHE - 1].react = nil; g_cache[TAA_CACHE - 1].dh[0] = nil; g_cache[TAA_CACHE - 1].dh[1] = nil; g_ncache--;
+        keep_old(old_out); keep_old(old_mv); keep_old(old_react); keep_old(old_dh0); keep_old(old_dh1); keep_old(old_sc);
+    }
+    g_cache[g_ncache].sc = sc; g_cache[g_ncache].out = out; g_cache[g_ncache].mv = mv;
+    g_cache[g_ncache].react = react; g_cache[g_ncache].dh[0] = dh0; g_cache[g_ncache].dh[1] = dh1;
+    g_cache[g_ncache].w = w; g_cache[g_ncache].h = h; g_cache[g_ncache].fmt = f; g_ncache++;
+    g.sc = sc; g.out = out; g.mv = mv; g.react = react; g.dh[0] = dh0; g.dh[1] = dh1;
+    g.w = w; g.h = h; g.fmt = f; g.prev_ok = 0;
+    TLOG("temporal scaler %lux%lu, scene format %lu, output RGBA16Float, 1:1 with jitter, reactive mask from depth %s; built in %.1f ms %s (%llu frames without anti-aliasing so far while waiting)",
+         (unsigned long)w, (unsigned long)h, (unsigned long)f, reactive_on() ? "on" : "off (TOTK_TAA_REACTIVE=0)",
+         ms, taa_sync() ? "on the submit thread" : "in the background", (unsigned long long)g_wait_frames);
     return 1;
 }
 /* ---- The fast resolve (TOTK_TAA_FAST; see the header) ---- */
