@@ -2871,6 +2871,7 @@ static uint64_t g_upd_filter_q, g_upd_filter_skip;           // overlap queries 
 static uint64_t g_sig_incr_n, g_sig_full_n, g_tex_ser_fast_n;  // stage_sig incremental / full walks; tex_view_valid steps taken inline
 static uint64_t g_cbc_hits, g_cbc_misses, g_cbc_verified; static int cbc_mode(void);   // TOTK_CBUF_CACHE (defined before encode_args)
 static uint64_t g_pso_memo_hits, g_pso_memo_misses; static int pso_memo_on(void);   // TOTK_PSO_MEMO (defined with g_pso)
+static uint64_t g_pso_memo2_verified; static int pso_memo2_on(void);   // TOTK_PSO_MEMO2 (defined with pso_lookup)
 static uint64_t g_ab_same;   // TOTK_AB_SAME: argument blocks bound again because the new bytes equal the shader's previous block
 static int upd_fast_on(void) {
     static int v = -1;
@@ -6329,9 +6330,9 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb) {
     MLOG("[replay-fast] upd-filter=%d queries=%llu skipped=%llu | sig incremental=%llu full=%llu | tex-ser-fast steps=%llu",upd_fast_on(),(unsigned long long)g_upd_filter_q,(unsigned long long)g_upd_filter_skip,
          (unsigned long long)g_sig_incr_n,(unsigned long long)g_sig_full_n,(unsigned long long)g_tex_ser_fast_n);
     { int dfon; uint64_t dskip, dhash, dscan; nvn_dirty_fast_stats(&dfon, &dskip, &dhash, &dscan);
-      MLOG("[replay-fast2] dirty-fast=%d blocks-skipped=%llu range-table=%llu range-scans=%llu | cbuf-cache=%d hits=%llu misses=%llu verified=%llu | ab-same=%llu | pso-memo=%d hits=%llu misses=%llu", dfon, (unsigned long long)dskip, (unsigned long long)dhash, (unsigned long long)dscan,
+      MLOG("[replay-fast2] dirty-fast=%d blocks-skipped=%llu range-table=%llu range-scans=%llu | cbuf-cache=%d hits=%llu misses=%llu verified=%llu | ab-same=%llu | pso-memo=%d hits=%llu misses=%llu | pso-memo2=%d verified=%llu", dfon, (unsigned long long)dskip, (unsigned long long)dhash, (unsigned long long)dscan,
            cbc_mode(), (unsigned long long)g_cbc_hits, (unsigned long long)g_cbc_misses, (unsigned long long)g_cbc_verified, (unsigned long long)g_ab_same,
-           pso_memo_on(), (unsigned long long)g_pso_memo_hits, (unsigned long long)g_pso_memo_misses); }
+           pso_memo_on(), (unsigned long long)g_pso_memo_hits, (unsigned long long)g_pso_memo_misses, pso_memo2_on(), (unsigned long long)g_pso_memo2_verified); }
     MLOG("[pkg-final-cache] enabled=%d kept=%llu", pkg_final_cache_on(), (unsigned long long)atomic_load(&g_pkg_final_kept));
     MLOG("贴图类型缓存已回收退役视图 %llu 个", (unsigned long long)g_type_retired_views);
     buffer_reuse_report();
@@ -7738,8 +7739,11 @@ static int sh_has_src(NvShader *s) { return s && (s->src || s->src_path); }
     void *ar_sh[6]; uint8_t ar_n, ar_st[32], ar_reg[32], ar_img[32];   // ar_*: draw_att_reads' sampled texture / image slots of sh[] (valid while sh[] is the same; ar_n 255 = more than 32, scan the bindings)
     int missing, miss_has[6]; uint64_t miss_sig[6]; int exp_skip;
     int keeps; uint64_t miss_gen;
-    int geo; NvProg *geo_ras, *geo_lean_ras; void *geo_ras_reader; NSMutableDictionary<NSNumber *, NSArray *> *geo_cache; } @end   // geo_lean_ras: the vertex + fragment of a lean geometry draw; geo_cache: {capture variant, kernel, reader, lean kernel or NSNull} by bind signature and input topology (nvn_geometry_rt.inc geo_prep)   // geo: a geometry stage (ctl / code / key [2] set) run as compute; geo_ras: the reader + fragment program its output is drawn with (for the reader geo_ras_reader)   // TOTK (iOS, Mac async shaders): missing = stages whose variant is not translated yet; miss_sig: signature whose variant is missing (prog_fit); exp_skip: TOTK_EXP_SKIP_FS decision (0 unknown, 1 keep, 2 skip); keeps: a stage stores to memory or streams out (sph_keeps_memory), its draws are never skipped; miss_gen: totk_rt_ready_gen() when a stage was last found missing
-@implementation NvProg @end
+    int geo; NvProg *geo_ras, *geo_lean_ras; void *geo_ras_reader; NSMutableDictionary<NSNumber *, NSArray *> *geo_cache;
+    void *pmemo; uint8_t pmemo_next; } @end   // pmemo: TOTK_PSO_MEMO2 per-program 2-entry cache; geo_lean_ras: the vertex + fragment of a lean geometry draw; geo_cache: {capture variant, kernel, reader, lean kernel or NSNull} by bind signature and input topology (nvn_geometry_rt.inc geo_prep)   // geo: a geometry stage (ctl / code / key [2] set) run as compute; geo_ras: the reader + fragment program its output is drawn with (for the reader geo_ras_reader)   // TOTK (iOS, Mac async shaders): missing = stages whose variant is not translated yet; miss_sig: signature whose variant is missing (prog_fit); exp_skip: TOTK_EXP_SKIP_FS decision (0 unknown, 1 keep, 2 skip); keeps: a stage stores to memory or streams out (sph_keeps_memory), its draws are never skipped; miss_gen: totk_rt_ready_gen() when a stage was last found missing
+@implementation NvProg
+- (void)dealloc { free(pmemo); }
+@end
 /* TOTK_EXP_SKIP_FS=<fragment key prefix>[,<prefix>...] (measurement only, 2026-10-16): drop every draw whose fragment shader key
    starts with one of the prefixes. A render pass whose draws are all dropped is never opened, so the GPU time saved is the
    whole cost of those passes (fixed per-pass overhead included): the upper bound of merging them away. Not for normal play. */
@@ -10227,8 +10231,31 @@ typedef struct { const void *pr; uint64_t gen; pso_key k; void *ps; } pso_memo_e
 #define PSO_MEMO_N 256
 static pso_memo_ent g_pso_memo[PSO_MEMO_N]; static uint64_t g_pso_gen = 1;
 static int pso_memo_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_PSO_MEMO"); v = !(e && !atoi(e)); if (!v) MLOG("TOTK_PSO_MEMO=0: every pipeline lookup hashes the key"); } return v; }
+/* TOTK_PSO_MEMO2 (HopeSuffers 51d5e36e, default on with TOTK_PSO_MEMO; =0 shared table; =2 verify every hit against g_pso):
+   per-NvProg 2-entry LRU cache eliminates 256-slot hash evictions; entries invalidate whenever g_pso_gen advances. */
+typedef struct { uint64_t gen; pso_key k; void *ps; } pso_pm_ent;
+static uint64_t g_pso_memo2_verified;
+static int pso_memo2_on(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("TOTK_PSO_MEMO2"); v = e ? atoi(e) : 1; if (v < 0 || v > 2) v = 1;
+                 if (v != 1) MLOG("TOTK_PSO_MEMO2=%d: %s", v, v ? "per-program pipeline memo, every hit verified" : "pipelines remembered in the shared table by program pointer"); }
+    return v;
+}
 static inline void *pso_lookup(const void *pr, const pso_key *k) {
     if (!pso_memo_on()) return hm_get_ptr(&g_pso, k);
+    if (pr && pso_memo2_on()) {
+        __unsafe_unretained NvProg *p = (__bridge NvProg *)pr; pso_pm_ent *m = (pso_pm_ent *)p->pmemo;
+        if (m) for (int i = 0; i < 2; i++) if (m[i].ps && m[i].gen == g_pso_gen && !memcmp(&m[i].k, k, sizeof *k)) {
+            if (pso_memo2_on() == 2) { if (hm_get_ptr(&g_pso, k) != m[i].ps) MDIE("per-program pipeline memo disagrees with the pipeline table"); g_pso_memo2_verified++; }
+            p->pmemo_next = (uint8_t)(i ^ 1); g_pso_memo_hits++; return m[i].ps; }
+        void *ps = hm_get_ptr(&g_pso, k); g_pso_memo_misses++;
+        if (ps) {
+            if (!m) { m = calloc(2, sizeof *m); if (!m) MDIE("pipeline memo"); p->pmemo = m; }
+            pso_pm_ent *e = &m[p->pmemo_next & 1]; p->pmemo_next ^= 1;
+            e->gen = g_pso_gen; e->k = *k; e->ps = ps;
+        }
+        return ps;
+    }
     uintptr_t h = (uintptr_t)pr; pso_memo_ent *e = &g_pso_memo[((h >> 4) ^ (h >> 13)) & (PSO_MEMO_N - 1)];
     if (e->pr == pr && e->gen == g_pso_gen && !memcmp(&e->k, k, sizeof *k)) { g_pso_memo_hits++; return e->ps; }
     void *ps = hm_get_ptr(&g_pso, k); g_pso_memo_misses++;
