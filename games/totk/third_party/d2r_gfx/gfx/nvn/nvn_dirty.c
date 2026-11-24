@@ -462,6 +462,15 @@ int nvn_dirty_since(const void *addr, size_t len, uint64_t stamp) {
     uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     return pages_since(r, p, q, stamp);   // 上传前最后一次写的代号 ≤ 戳；之后的写必 > 戳 | The generation of the last write before upload is <= the stamp; any later write must be > the stamp
 }
+/* Combines nvn_dirty_tracked and nvn_dirty_since in a single find() lookup, reusing pages_since/BLK_SHIFT. */
+int nvn_dirty_check(const void *addr, size_t len, uint64_t stamp) {
+    range_t *r = find((uintptr_t)addr);
+    if (!r || (uintptr_t)addr + len > r->end) return -1;
+    if (!len) return 0;
+    if (atomic_load(&r->latest) <= stamp) return 0;
+    uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
+    return pages_since(r, p, q, stamp);
+}
 #endif
 #if NVN_DIRTY_SPLIT
 /* BOTW versions of the functions above: a pool's pages can lie in several ranges (its own gaps and the neighbours' shared
@@ -589,6 +598,9 @@ int nvn_dirty_since(const void *addr, size_t len, uint64_t stamp) {
         a = stop;
     }
     return 0;
+}
+int nvn_dirty_check(const void *addr, size_t len, uint64_t stamp) {
+    return nvn_dirty_tracked(addr, len) ? nvn_dirty_since(addr, len, stamp) : -1;
 }
 /* GPU writes (as above), over up to 4 ranges */
 typedef struct { int n; range_t *r[4]; uintptr_t p0[4], p1[4]; uint8_t *was[4]; } gpu_write_tok;

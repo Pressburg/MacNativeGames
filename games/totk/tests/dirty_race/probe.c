@@ -117,6 +117,32 @@ static void block_summary(size_t pg) {
     nvn_dirty_remove_range(m + 150 * pg);
 }
 
+/* Single-lookup nvn_dirty_check must match nvn_dirty_tracked / nvn_dirty_since across random sub-ranges and stamps. */
+static void chunk_check(size_t pg) {
+    enum { NP = 300, ROUNDS = 40, QUERIES = 400 };
+    uint8_t *pool = mmap(NULL, NP * pg, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (pool == MAP_FAILED) { perror("mmap"); g_fail++; return; }
+    nvn_dirty_add_range(pool, NP * pg);
+    uint64_t stamps[ROUNDS]; int diff = 0, dirty = 0, clean = 0; unsigned seed = 12345;
+    for (int rd = 0; rd < ROUNDS; rd++) {
+        stamps[rd] = nvn_dirty_now(); nvn_dirty_protect(pool, NP * pg);
+        int nw = (int)((seed = seed * 1103515245u + 12345u) >> 16) % 4;
+        for (int w = 0; w < nw; w++) { size_t pgi = ((seed = seed * 1103515245u + 12345u) >> 16) % NP; pool[pgi * pg + 8] ^= 1; }
+        for (int qn = 0; qn < QUERIES; qn++) {
+            size_t lo = ((seed = seed * 1103515245u + 12345u) >> 16) % (NP * pg), len = 1 + ((seed = seed * 1103515245u + 12345u) >> 16) % (NP * pg - lo);
+            uint64_t st = stamps[((seed = seed * 1103515245u + 12345u) >> 16) % (rd + 1)];
+            int want = nvn_dirty_tracked(pool + lo, len) ? nvn_dirty_since(pool + lo, len, st) : -1, got = nvn_dirty_check(pool + lo, len, st);
+            diff += want != got; dirty += want == 1; clean += want == 0;
+        }
+    }
+    EXPECT("chunked check: answers differing from tracked + since", 0, diff);
+    EXPECT("chunked check: both dirty and clean answers were exercised", 1, dirty > 100 && clean > 100);
+    uint8_t local[16];
+    EXPECT("chunked check: untracked memory answers -1 (control)", -1, nvn_dirty_check(local, sizeof local, 0));
+    EXPECT("chunked check: untracked zero-length range answers -1", -1, nvn_dirty_check(local, 0, 0));
+    nvn_dirty_remove_range(pool);
+}
+
 #if defined(GAME_BOTW)
 /* BOTW: pool B starts on pool A's last page. B gets a range for its own pages only; a texture of B across the border is
    tracked through both ranges; destroying B keeps A's range (the Hero's Path bug), destroying A first leaves B's texture
@@ -195,6 +221,7 @@ int main(void) {
     if (busy_protect(pg)) return 2;
     stamp_order(pg);
     block_summary(pg);
+    chunk_check(pg);
 #if defined(GAME_BOTW)
     overlap(pg);
 #endif

@@ -6163,10 +6163,12 @@ static void *tex_mtl_p(const tex_t *ct) {
                was about 4.5% of the replay. TOTK_TEX_CHECK_ONCE=0: check on every use as before. */
             if (tex_check_once() && pk->csub == g_sub_serial) return (__bridge void *)pk->tex;
             pk->csub = g_sub_serial;
-            /* TOTK: no guest write anywhere since the last check of a tracked texture means clean, without looking the
-               range up again (the lookup was a linear scan over ~3,700 pools, about 14% of the replay). */
-            int tracked = now == pk->seen && pk->tracked ? 1 : nvn_dirty_tracked(t->mem, t->L.size);
-            clean = tracked && (now == pk->seen || !nvn_dirty_since(t->mem, t->L.size, pk->stamp));
+            /* TOTK: no guest write anywhere since the last check of a tracked texture means clean; when `now != pk->seen`,
+               nvn_dirty_check performs tracked+since in one range lookup while still using BLK_SHIFT block skipping. */
+            int tracked;
+            if (now == pk->seen && pk->tracked) { tracked = 1; clean = 1; }
+            else if (now != pk->seen) { int c = nvn_dirty_check(t->mem, t->L.size, pk->stamp); tracked = c >= 0; clean = c == 0; }
+            else { tracked = nvn_dirty_tracked(t->mem, t->L.size); clean = tracked; }
             if (!clean && tracked && pkg_edge_clean(t, pk)) clean = 1; BOTW_PKG_WB_STALE(pk, t, clean)   // TOTK (#90): only a shared first / last page was written
             pk->seen = now; pk->tracked = tracked;
             }
